@@ -1,0 +1,239 @@
+--// SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+--// SETTINGS
+local MAX_DISTANCE = 500
+local SMOOTHNESS = 0.12
+local DEFAULT_FOV = 70
+local ZOOM_FOV = 45
+
+--// STATE
+local targets = {}
+local currentIndex = 1
+local lockedTarget = nil
+local lockEnabled = false
+local hardLock = false
+
+--------------------------------------------------
+-- GUI CREATION
+--------------------------------------------------
+
+local gui = Instance.new("ScreenGui", player.PlayerGui)
+gui.Name = "PeilHub"
+gui.ResetOnSpawn = false
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 420, 0, 360)
+main.Position = UDim2.new(0.5,-210,0.5,-180)
+main.BackgroundColor3 = Color3.fromRGB(20,20,20)
+main.Active = true
+Instance.new("UICorner", main).CornerRadius = UDim.new(0,16)
+
+-- Dragging
+local dragging, dragStart, startPos
+main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
+	end
+end)
+
+main.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		main.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- Title
+local title = Instance.new("TextLabel", main)
+title.Size = UDim2.new(1,0,0,70)
+title.BackgroundTransparency = 1
+title.Text = "PEILHUB"
+title.Font = Enum.Font.GothamBlack
+title.TextScaled = true
+
+-- Animated Glow
+task.spawn(function()
+	while true do
+		TweenService:Create(title, TweenInfo.new(1), {TextColor3 = Color3.fromRGB(0,255,120)}):Play()
+		task.wait(1)
+		TweenService:Create(title, TweenInfo.new(1), {TextColor3 = Color3.fromRGB(0,200,255)}):Play()
+		task.wait(1)
+	end
+end)
+
+-- Info
+local info = Instance.new("TextLabel", main)
+info.Size = UDim2.new(1,-20,0,50)
+info.Position = UDim2.new(0,10,0,90)
+info.BackgroundTransparency = 1
+info.TextScaled = true
+info.Font = Enum.Font.GothamBold
+info.Text = "Target: None"
+
+-- Health Bar
+local healthBG = Instance.new("Frame", main)
+healthBG.Size = UDim2.new(0.9,0,0,20)
+healthBG.Position = UDim2.new(0.05,0,0,150)
+healthBG.BackgroundColor3 = Color3.fromRGB(60,60,60)
+Instance.new("UICorner", healthBG).CornerRadius = UDim.new(1,0)
+
+local healthFill = Instance.new("Frame", healthBG)
+healthFill.Size = UDim2.new(1,0,1,0)
+healthFill.BackgroundColor3 = Color3.fromRGB(0,255,120)
+Instance.new("UICorner", healthFill).CornerRadius = UDim.new(1,0)
+
+-- Distance
+local distanceLabel = Instance.new("TextLabel", main)
+distanceLabel.Size = UDim2.new(1,0,0,40)
+distanceLabel.Position = UDim2.new(0,0,0,190)
+distanceLabel.BackgroundTransparency = 1
+distanceLabel.TextScaled = true
+distanceLabel.Font = Enum.Font.Gotham
+distanceLabel.Text = "Distance: 0"
+
+-- Reticle
+local reticle = Instance.new("Frame", gui)
+reticle.Size = UDim2.new(0,12,0,12)
+reticle.Position = UDim2.new(0.5,-6,0.5,-6)
+reticle.BackgroundColor3 = Color3.fromRGB(0,255,120)
+Instance.new("UICorner", reticle).CornerRadius = UDim.new(1,0)
+
+-- Highlight
+local highlight = Instance.new("Highlight", gui)
+highlight.FillTransparency = 1
+highlight.OutlineColor = Color3.fromRGB(0,255,120)
+highlight.Enabled = false
+
+-- Sound
+local clickSound = Instance.new("Sound", gui)
+clickSound.SoundId = "rbxassetid://12222242"
+clickSound.Volume = 0.5
+
+--------------------------------------------------
+-- TARGET SYSTEM (NPC ONLY)
+--------------------------------------------------
+
+local function refreshTargets()
+	targets = {}
+	local myChar = player.Character
+	if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
+	
+	local myPos = myChar.HumanoidRootPart.Position
+	
+	for _, npc in pairs(CollectionService:GetTagged("Targetable")) do
+		if npc:FindFirstChild("HumanoidRootPart") and npc:FindFirstChild("Humanoid") then
+			if npc.Humanoid.Health > 0 then
+				local dist = (npc.HumanoidRootPart.Position - myPos).Magnitude
+				if dist <= MAX_DISTANCE then
+					table.insert(targets, {Model = npc, Distance = dist})
+				end
+			end
+		end
+	end
+	
+	table.sort(targets, function(a,b)
+		return a.Distance < b.Distance
+	end)
+end
+
+local function selectTarget(index)
+	refreshTargets()
+	if #targets == 0 then return end
+	
+	currentIndex = ((index - 1) % #targets) + 1
+	lockedTarget = targets[currentIndex].Model
+	
+	info.Text = "Target: "..lockedTarget.Name
+	highlight.Adornee = lockedTarget
+	highlight.Enabled = true
+	
+	clickSound:Play()
+end
+
+--------------------------------------------------
+-- CAMERA LOCK SYSTEM
+--------------------------------------------------
+
+RunService.RenderStepped:Connect(function()
+	if lockEnabled and lockedTarget then
+		if lockedTarget:FindFirstChild("HumanoidRootPart") then
+			
+			local targetPos = lockedTarget.HumanoidRootPart.Position
+			local camPos = camera.CFrame.Position
+			
+			if hardLock then
+				camera.CFrame = CFrame.new(camPos, targetPos)
+			else
+				local smoothPos = camPos:Lerp(targetPos + Vector3.new(0,3,8), SMOOTHNESS)
+				camera.CFrame = CFrame.new(smoothPos, targetPos)
+			end
+			
+			-- Distance update
+			local myChar = player.Character
+			if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+				local dist = (targetPos - myChar.HumanoidRootPart.Position).Magnitude
+				distanceLabel.Text = "Distance: "..math.floor(dist)
+			end
+			
+			-- Health update
+			local hum = lockedTarget:FindFirstChild("Humanoid")
+			if hum then
+				local percent = hum.Health / hum.MaxHealth
+				healthFill.Size = UDim2.new(percent,0,1,0)
+				
+				if hum.Health <= 0 then
+					lockEnabled = false
+					highlight.Enabled = false
+					info.Text = "Target: None"
+				end
+			end
+		end
+	end
+end)
+
+--------------------------------------------------
+-- INPUT CONTROLS
+--------------------------------------------------
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	
+	if input.KeyCode == Enum.KeyCode.Q then
+		selectTarget(currentIndex - 1)
+	elseif input.KeyCode == Enum.KeyCode.E then
+		selectTarget(currentIndex + 1)
+	elseif input.KeyCode == Enum.KeyCode.F then
+		lockEnabled = not lockEnabled
+	elseif input.KeyCode == Enum.KeyCode.R then
+		hardLock = not hardLock
+	elseif input.KeyCode == Enum.KeyCode.Z then
+		TweenService:Create(camera, TweenInfo.new(0.25), {FieldOfView = ZOOM_FOV}):Play()
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.Z then
+		TweenService:Create(camera, TweenInfo.new(0.25), {FieldOfView = DEFAULT_FOV}):Play()
+	end
+end)

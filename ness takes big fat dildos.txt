@@ -7,6 +7,7 @@ local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
+-- Configuration
 local Config = {
     Enabled = false,
     Aimbot = {
@@ -36,6 +37,7 @@ local Config = {
     }
 }
 
+-- Variables
 local FOVCircle
 local DesyncOffset = Vector3.new(0, 0, 0)
 local DesyncAngle = 0
@@ -43,6 +45,7 @@ local CurrentTarget = nil
 local OriginalNamecall
 local OriginalIndex
 
+-- Utility Functions
 local function CreateFOVCircle()
     if FOVCircle then
         FOVCircle:Remove()
@@ -158,6 +161,7 @@ local function AimbotStep()
     end
 end
 
+-- Desync System
 local function CalculateDesyncOffset()
     if not Config.Desync.Enabled then 
         return Vector3.new(0, 0, 0)
@@ -200,10 +204,14 @@ local function ApplyDesync()
     
     if rootPart then
         DesyncOffset = CalculateDesyncOffset()
-        s
+        
+        -- Apply desync by offsetting the character's network position
+        -- This makes the player appear in a different location to others
         rootPart.CFrame = rootPart.CFrame + DesyncOffset
     end
 end
+
+-- Hooks for Silent Aim
 local function HookRemote()
     OriginalNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local args = {...}
@@ -228,12 +236,15 @@ local function HookRemote()
         return OriginalNamecall(self, unpack(args))
     end)
 end
+
+-- Create UI
 local function CreateUI()
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "RagobotUI"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     
+    -- Main Frame
     local MainFrame = Instance.new("Frame")
     MainFrame.Name = "MainFrame"
     MainFrame.Parent = ScreenGui
@@ -245,6 +256,7 @@ local function CreateUI()
     MainFrame.Active = true
     MainFrame.Draggable = true
     
+    -- Title
     local Title = Instance.new("TextLabel")
     Title.Name = "Title"
     Title.Parent = MainFrame
@@ -256,6 +268,7 @@ local function CreateUI()
     Title.TextColor3 = Color3.fromRGB(255, 255, 255)
     Title.TextSize = 16
     
+    -- Close Button
     local CloseBtn = Instance.new("TextButton")
     CloseBtn.Name = "CloseBtn"
     CloseBtn.Parent = Title
@@ -272,6 +285,7 @@ local function CreateUI()
         ScreenGui:Destroy()
     end)
     
+    -- Scroll Frame for options
     local ScrollFrame = Instance.new("ScrollingFrame")
     ScrollFrame.Name = "ScrollFrame"
     ScrollFrame.Parent = MainFrame
@@ -284,6 +298,7 @@ local function CreateUI()
     
     local yOffset = 10
     
+    -- Helper function to create toggles
     local function CreateToggle(name, callback, defaultValue)
         local Toggle = Instance.new("Frame")
         Toggle.Name = name
@@ -327,6 +342,7 @@ local function CreateUI()
         return Toggle
     end
     
+    -- Helper function to create sliders
     local function CreateSlider(name, min, max, default, callback)
         local Slider = Instance.new("Frame")
         Slider.Name = name
@@ -400,6 +416,7 @@ local function CreateUI()
         return Slider
     end
     
+    -- Helper function to create dropdowns
     local function CreateDropdown(name, options, default, callback)
         local Dropdown = Instance.new("Frame")
         Dropdown.Name = name
@@ -445,6 +462,7 @@ local function CreateUI()
         return Dropdown
     end
     
+    -- Create UI Elements
     CreateToggle("Aimbot", function(val) 
         Config.Aimbot.Enabled = val 
     end, Config.Aimbot.Enabled)
@@ -497,6 +515,7 @@ local function CreateUI()
         Config.SilentAim.HitChance = val
     end)
     
+    -- Parent to CoreGui
     if gethui then
         ScreenGui.Parent = gethui()
     elseif syn and syn.protect_gui then
@@ -509,6 +528,7 @@ local function CreateUI()
     return ScreenGui
 end
 
+-- Main Loop
 RunService.RenderStepped:Connect(function()
     UpdateFOVCircle()
     
@@ -521,6 +541,7 @@ RunService.Heartbeat:Connect(function()
     ApplyDesync()
 end)
 
+-- Initialize
 CreateFOVCircle()
 CreateUI()
 HookRemote()
@@ -528,6 +549,7 @@ HookRemote()
 print("[RIVALS RAGEBOT] Loaded successfully!")
 print("[RIVALS RAGEBOT] Press INSERT to toggle UI")
 
+-- Toggle UI with INSERT key
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.Insert then
         local ui = game.CoreGui:FindFirstChild("RagobotUI") or (gethui and gethui():FindFirstChild("RagobotUI"))

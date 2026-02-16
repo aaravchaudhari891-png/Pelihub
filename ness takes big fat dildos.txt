@@ -528,7 +528,6 @@ HookRemote()
 print("[RIVALS RAGEBOT] Loaded successfully!")
 print("[RIVALS RAGEBOT] Press INSERT to toggle UI")
 
--- Toggle UI with INSERT key
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.Insert then
         local ui = game.CoreGui:FindFirstChild("RagobotUI") or (gethui and gethui():FindFirstChild("RagobotUI"))

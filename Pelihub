@@ -1,1 +1,809 @@
+-- PlayerHub LocalScript
+-- Place in: StarterPlayer > StarterPlayerScripts
 
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local camera           = workspace.CurrentCamera
+
+local player    = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+
+-- ================================
+-- SETTINGS
+-- ================================
+local WALK_DEFAULT = 16
+local WALK_MIN     = 2
+local WALK_MAX     = 300
+local WALK_STEP    = 5
+
+local JUMP_DEFAULT = 50
+local JUMP_MIN     = 10
+local JUMP_MAX     = 500
+local JUMP_STEP    = 10
+
+-- ================================
+-- STATE
+-- ================================
+local walkValue         = WALK_DEFAULT
+local jumpValue         = JUMP_DEFAULT
+local hubVisible        = true
+local aimbotEnabled     = false
+
+local dragWhat          = nil
+local dragStartMouse    = nil
+local dragStartPos      = nil
+local movedWhileDragging = false
+
+-- ================================
+-- GUI
+-- ================================
+local gui = Instance.new("ScreenGui")
+gui.Name           = "PlayerHub"
+gui.ResetOnSpawn   = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder   = 100
+gui.Parent         = player.PlayerGui
+
+-- ================================
+-- HELPERS
+-- ================================
+local function clamp(v, lo, hi)
+	return math.max(lo, math.min(hi, v))
+end
+
+-- Frame-based button = ZERO touch delay on mobile
+local function makeBtn(parent, txt, x, y, w, h, color, callback)
+	local f = Instance.new("Frame")
+	f.Size             = UDim2.new(0, w, 0, h)
+	f.Position         = UDim2.new(0, x, 0, y)
+	f.BackgroundColor3 = color
+	f.BorderSizePixel  = 0
+	f.ZIndex           = 12
+	f.Active           = true
+	f.Parent           = parent
+	Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size                = UDim2.new(1, 0, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text                = txt
+	lbl.TextColor3          = Color3.new(1, 1, 1)
+	lbl.TextSize            = 17
+	lbl.Font                = Enum.Font.GothamBold
+	lbl.ZIndex              = 13
+	lbl.Parent              = f
+
+	f.InputBegan:Connect(function(inp)
+		if inp.UserInputType == Enum.UserInputType.MouseButton1
+		or inp.UserInputType == Enum.UserInputType.Touch then
+			f.BackgroundTransparency = 0.35
+			callback()
+		end
+	end)
+	f.InputEnded:Connect(function(inp)
+		if inp.UserInputType == Enum.UserInputType.MouseButton1
+		or inp.UserInputType == Enum.UserInputType.Touch then
+			f.BackgroundTransparency = 0
+		end
+	end)
+	return f, lbl
+end
+
+local function makeLabel(parent, txt, x, y, w, h, size, color)
+	local l = Instance.new("TextLabel")
+	l.Size                = UDim2.new(0, w, 0, h)
+	l.Position            = UDim2.new(0, x, 0, y)
+	l.BackgroundTransparency = 1
+	l.Text                = txt
+	l.TextColor3          = color or Color3.new(1, 1, 1)
+	l.TextSize            = size or 14
+	l.Font                = Enum.Font.GothamBold
+	l.ZIndex              = 12
+	l.Parent              = parent
+	return l
+end
+
+local function makeSlider(parent, x, y, w, color)
+	local track = Instance.new("Frame")
+	track.Size             = UDim2.new(0, w, 0, 10)
+	track.Position         = UDim2.new(0, x, 0, y)
+	track.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+	track.BorderSizePixel  = 0
+	track.ZIndex           = 12
+	track.Active           = true
+	track.Parent           = parent
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+	local fill = Instance.new("Frame")
+	fill.Size             = UDim2.new(0, 0, 1, 0)
+	fill.BackgroundColor3 = color
+	fill.BorderSizePixel  = 0
+	fill.ZIndex           = 13
+	fill.Parent           = track
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local thumb = Instance.new("Frame")
+	thumb.Size             = UDim2.new(0, 26, 0, 26)
+	thumb.AnchorPoint      = Vector2.new(0.5, 0.5)
+	thumb.Position         = UDim2.new(0, 0, 0.5, 0)
+	thumb.BackgroundColor3 = Color3.fromRGB(240, 240, 255)
+	thumb.BorderSizePixel  = 0
+	thumb.ZIndex           = 14
+	thumb.Active           = true
+	thumb.Parent           = track
+	Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
+
+	local ths = Instance.new("UIStroke")
+	ths.Color     = color
+	ths.Thickness = 3
+	ths.Parent    = thumb
+
+	return track, fill, thumb
+end
+
+local function getSliderValue(pos, track, minV, maxV)
+	local ap  = track.AbsolutePosition
+	local as  = track.AbsoluteSize
+	local rel = clamp((pos.X - ap.X) / as.X, 0, 1)
+	return math.floor(minV + rel * (maxV - minV))
+end
+
+-- ================================
+-- TOGGLE BUTTON (draggable Frame)
+-- ================================
+local toggleBtn = Instance.new("Frame")
+toggleBtn.Size             = UDim2.new(0, 100, 0, 100)
+toggleBtn.Position         = UDim2.new(0, 20, 0.5, -50)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(210, 45, 55)
+toggleBtn.BorderSizePixel  = 0
+toggleBtn.ZIndex           = 50
+toggleBtn.Active           = true
+toggleBtn.Parent           = gui
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 18)
+
+local toggleLabel = Instance.new("TextLabel")
+toggleLabel.Size                = UDim2.new(1, 0, 1, 0)
+toggleLabel.BackgroundTransparency = 1
+toggleLabel.Text                = "CLOSE\nHUB"
+toggleLabel.TextColor3          = Color3.new(1, 1, 1)
+toggleLabel.TextSize            = 16
+toggleLabel.Font                = Enum.Font.GothamBold
+toggleLabel.ZIndex              = 51
+toggleLabel.Parent              = toggleBtn
+
+-- ================================
+-- HUB PANEL  (taller to fit aimbot)
+-- ================================
+local panel = Instance.new("Frame")
+panel.Size             = UDim2.new(0, 320, 0, 720)
+panel.Position         = UDim2.new(0, 140, 0.5, -360)
+panel.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
+panel.BorderSizePixel  = 0
+panel.ZIndex           = 10
+panel.Visible          = true
+panel.Parent           = gui
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 14)
+
+local stroke = Instance.new("UIStroke")
+stroke.Color      = Color3.fromRGB(0, 160, 255)
+stroke.Thickness  = 2
+stroke.Parent     = panel
+
+-- Header
+local header = Instance.new("Frame")
+header.Size             = UDim2.new(1, 0, 0, 48)
+header.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+header.BorderSizePixel  = 0
+header.ZIndex           = 11
+header.Active           = true
+header.Parent           = panel
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 14)
+
+local headerFix = Instance.new("Frame")
+headerFix.Size             = UDim2.new(1, 0, 0, 14)
+headerFix.Position         = UDim2.new(0, 0, 1, -14)
+headerFix.BackgroundColor3 = Color3.fromRGB(0, 110, 210)
+headerFix.BorderSizePixel  = 0
+headerFix.ZIndex           = 11
+headerFix.Parent           = header
+
+local headerLabel = Instance.new("TextLabel")
+headerLabel.Size                = UDim2.new(1, 0, 1, 0)
+headerLabel.BackgroundTransparency = 1
+headerLabel.Text                = "PLAYER HUB"
+headerLabel.TextColor3          = Color3.fromRGB(255, 255, 255)
+headerLabel.TextSize            = 16
+headerLabel.Font                = Enum.Font.GothamBold
+headerLabel.ZIndex              = 12
+headerLabel.Parent              = header
+
+-- ================================
+-- WALK SPEED SECTION  (y = 58)
+-- ================================
+makeLabel(panel, "WALK SPEED", 16, 58, 288, 18, 12, Color3.fromRGB(80, 200, 255))
+
+local walkBox = Instance.new("Frame")
+walkBox.Size             = UDim2.new(0, 288, 0, 56)
+walkBox.Position         = UDim2.new(0, 16, 0, 78)
+walkBox.BackgroundColor3 = Color3.fromRGB(20, 20, 34)
+walkBox.BorderSizePixel  = 0
+walkBox.ZIndex           = 12
+walkBox.Parent           = panel
+Instance.new("UICorner", walkBox).CornerRadius = UDim.new(0, 8)
+
+local walkNumLbl = makeLabel(walkBox, "16", 0, 4, 288, 30, 24, Color3.fromRGB(80, 200, 255))
+walkNumLbl.TextXAlignment = Enum.TextXAlignment.Center
+local wUnit = makeLabel(walkBox, "studs / sec", 0, 36, 288, 16, 11, Color3.fromRGB(55, 85, 115))
+wUnit.TextXAlignment = Enum.TextXAlignment.Center
+
+makeBtn(panel, "−",     16,  144, 72,  42, Color3.fromRGB(190, 40, 50),
+	function() walkValue = clamp(walkValue - WALK_STEP, WALK_MIN, WALK_MAX) applyWalk() end)
+makeBtn(panel, "RESET", 98,  144, 100, 42, Color3.fromRGB(40, 65, 150),
+	function() walkValue = WALK_DEFAULT applyWalk() end)
+makeBtn(panel, "+",     208, 144, 96,  42, Color3.fromRGB(30, 155, 65),
+	function() walkValue = clamp(walkValue + WALK_STEP, WALK_MIN, WALK_MAX) applyWalk() end)
+
+local walkTrack, walkFill, walkThumb = makeSlider(panel, 16, 200, 288, Color3.fromRGB(80, 200, 255))
+
+walkTrack.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat  = "walk"
+		walkValue = getSliderValue(inp.Position, walkTrack, WALK_MIN, WALK_MAX)
+		applyWalk()
+	end
+end)
+walkThumb.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat = "walk"
+	end
+end)
+
+-- ================================
+-- DIVIDER 1
+-- ================================
+local div1 = Instance.new("Frame")
+div1.Size             = UDim2.new(0, 288, 0, 1)
+div1.Position         = UDim2.new(0, 16, 0, 222)
+div1.BackgroundColor3 = Color3.fromRGB(30, 35, 55)
+div1.BorderSizePixel  = 0
+div1.ZIndex           = 12
+div1.Parent           = panel
+
+-- ================================
+-- JUMP HEIGHT SECTION  (y = 230)
+-- ================================
+makeLabel(panel, "JUMP HEIGHT", 16, 230, 288, 18, 12, Color3.fromRGB(175, 100, 255))
+
+local jumpBox = Instance.new("Frame")
+jumpBox.Size             = UDim2.new(0, 288, 0, 56)
+jumpBox.Position         = UDim2.new(0, 16, 0, 250)
+jumpBox.BackgroundColor3 = Color3.fromRGB(20, 20, 34)
+jumpBox.BorderSizePixel  = 0
+jumpBox.ZIndex           = 12
+jumpBox.Parent           = panel
+Instance.new("UICorner", jumpBox).CornerRadius = UDim.new(0, 8)
+
+local jumpNumLbl = makeLabel(jumpBox, "50", 0, 4, 288, 30, 24, Color3.fromRGB(175, 100, 255))
+jumpNumLbl.TextXAlignment = Enum.TextXAlignment.Center
+local jUnit = makeLabel(jumpBox, "jump power", 0, 36, 288, 16, 11, Color3.fromRGB(55, 85, 115))
+jUnit.TextXAlignment = Enum.TextXAlignment.Center
+
+makeBtn(panel, "−",     16,  316, 72,  42, Color3.fromRGB(190, 40, 50),
+	function() jumpValue = clamp(jumpValue - JUMP_STEP, JUMP_MIN, JUMP_MAX) applyJump() end)
+makeBtn(panel, "RESET", 98,  316, 100, 42, Color3.fromRGB(40, 65, 150),
+	function() jumpValue = JUMP_DEFAULT applyJump() end)
+makeBtn(panel, "+",     208, 316, 96,  42, Color3.fromRGB(30, 155, 65),
+	function() jumpValue = clamp(jumpValue + JUMP_STEP, JUMP_MIN, JUMP_MAX) applyJump() end)
+
+local jumpTrack, jumpFill, jumpThumb = makeSlider(panel, 16, 372, 288, Color3.fromRGB(175, 100, 255))
+
+jumpTrack.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat  = "jump"
+		jumpValue = getSliderValue(inp.Position, jumpTrack, JUMP_MIN, JUMP_MAX)
+		applyJump()
+	end
+end)
+jumpThumb.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat = "jump"
+	end
+end)
+
+-- ================================
+-- DIVIDER 2
+-- ================================
+local div2 = Instance.new("Frame")
+div2.Size             = UDim2.new(0, 288, 0, 1)
+div2.Position         = UDim2.new(0, 16, 0, 396)
+div2.BackgroundColor3 = Color3.fromRGB(30, 35, 55)
+div2.BorderSizePixel  = 0
+div2.ZIndex           = 12
+div2.Parent           = panel
+
+-- ================================
+-- AIMBOT SECTION  (y = 404)
+-- ================================
+local AIMBOT_RANGE     = 100  -- default studs range
+local AIMBOT_RANGE_MIN = 20
+local AIMBOT_RANGE_MAX = 500
+
+makeLabel(panel, "AIMBOT", 16, 404, 288, 18, 12, Color3.fromRGB(255, 80, 80))
+
+-- Status display box
+local aimbotBox = Instance.new("Frame")
+aimbotBox.Size             = UDim2.new(0, 288, 0, 46)
+aimbotBox.Position         = UDim2.new(0, 16, 0, 424)
+aimbotBox.BackgroundColor3 = Color3.fromRGB(20, 20, 34)
+aimbotBox.BorderSizePixel  = 0
+aimbotBox.ZIndex           = 12
+aimbotBox.Parent           = panel
+Instance.new("UICorner", aimbotBox).CornerRadius = UDim.new(0, 8)
+
+local aimbotStatusLbl = makeLabel(aimbotBox, "OFF", 0, 4, 288, 20, 18, Color3.fromRGB(180, 60, 60))
+aimbotStatusLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+local aimbotTargetLbl = makeLabel(aimbotBox, "No target", 0, 26, 288, 16, 10, Color3.fromRGB(55, 85, 115))
+aimbotTargetLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+-- Range label + slider
+makeLabel(panel, "RANGE", 16, 478, 288, 18, 11, Color3.fromRGB(255, 130, 80))
+
+local rangeBox = Instance.new("Frame")
+rangeBox.Size             = UDim2.new(0, 288, 0, 36)
+rangeBox.Position         = UDim2.new(0, 16, 0, 498)
+rangeBox.BackgroundColor3 = Color3.fromRGB(20, 20, 34)
+rangeBox.BorderSizePixel  = 0
+rangeBox.ZIndex           = 12
+rangeBox.Parent           = panel
+Instance.new("UICorner", rangeBox).CornerRadius = UDim.new(0, 8)
+
+local rangeNumLbl = makeLabel(rangeBox, "100 studs", 0, 8, 288, 20, 14, Color3.fromRGB(255, 130, 80))
+rangeNumLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+local rangeTrack, rangeFill, rangeThumb = makeSlider(panel, 16, 542, 288, Color3.fromRGB(255, 130, 80))
+
+-- init range slider position
+local function updateRangeUI()
+	local p = (AIMBOT_RANGE - AIMBOT_RANGE_MIN) / (AIMBOT_RANGE_MAX - AIMBOT_RANGE_MIN)
+	rangeFill.Size      = UDim2.new(p, 0, 1, 0)
+	rangeThumb.Position = UDim2.new(p, 0, 0.5, 0)
+	rangeNumLbl.Text    = tostring(AIMBOT_RANGE) .. " studs"
+end
+
+rangeTrack.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat     = "range"
+		AIMBOT_RANGE = getSliderValue(inp.Position, rangeTrack, AIMBOT_RANGE_MIN, AIMBOT_RANGE_MAX)
+		updateRangeUI()
+	end
+end)
+rangeThumb.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat = "range"
+	end
+end)
+
+-- AIMBOT toggle button
+-- FIX: we manually create the Frame and label so we can reference
+-- the label directly without it getting clobbered
+
+-- TARGET MODE: "head" | "random" | "body"
+local aimMode = "head"
+
+makeLabel(panel, "TARGET MODE", 16, 558, 288, 18, 11, Color3.fromRGB(255, 80, 80))
+
+-- 3 mode buttons side by side
+local modeButtons = {}
+local modeDefs = {
+	{ key = "head",   label = "HEAD",   x = 16  },
+	{ key = "random", label = "RANDOM", x = 112 },
+	{ key = "body",   label = "BODY",   x = 208 },
+}
+
+local function refreshModeButtons()
+	for _, def in ipairs(modeDefs) do
+		local btn = modeButtons[def.key]
+		if def.key == aimMode then
+			btn.BackgroundColor3 = Color3.fromRGB(210, 45, 55)
+		else
+			btn.BackgroundColor3 = Color3.fromRGB(35, 35, 60)
+		end
+	end
+end
+
+for _, def in ipairs(modeDefs) do
+	local f = Instance.new("Frame")
+	f.Size             = UDim2.new(0, 88, 0, 38)
+	f.Position         = UDim2.new(0, def.x, 0, 578)
+	f.BackgroundColor3 = Color3.fromRGB(35, 35, 60)
+	f.BorderSizePixel  = 0
+	f.ZIndex           = 12
+	f.Active           = true
+	f.Parent           = panel
+	Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size                = UDim2.new(1, 0, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text                = def.label
+	lbl.TextColor3          = Color3.new(1, 1, 1)
+	lbl.TextSize            = 13
+	lbl.Font                = Enum.Font.GothamBold
+	lbl.ZIndex              = 13
+	lbl.Parent              = f
+
+	local key = def.key
+	f.InputBegan:Connect(function(inp)
+		if inp.UserInputType == Enum.UserInputType.MouseButton1
+		or inp.UserInputType == Enum.UserInputType.Touch then
+			aimMode = key
+			refreshModeButtons()
+		end
+	end)
+
+	modeButtons[def.key] = f
+end
+
+refreshModeButtons()
+
+local aimbotToggleFrame = Instance.new("Frame")
+aimbotToggleFrame.Size             = UDim2.new(0, 288, 0, 46)
+aimbotToggleFrame.Position         = UDim2.new(0, 16, 0, 628)
+aimbotToggleFrame.BackgroundColor3 = Color3.fromRGB(80, 20, 20)
+aimbotToggleFrame.BorderSizePixel  = 0
+aimbotToggleFrame.ZIndex           = 12
+aimbotToggleFrame.Active           = true
+aimbotToggleFrame.Parent           = panel
+Instance.new("UICorner", aimbotToggleFrame).CornerRadius = UDim.new(0, 8)
+
+-- This is the label we update — direct reference, no bugs
+local aimbotBtnLbl = Instance.new("TextLabel")
+aimbotBtnLbl.Size                = UDim2.new(1, 0, 1, 0)
+aimbotBtnLbl.BackgroundTransparency = 1
+aimbotBtnLbl.Text                = "AIMBOT: OFF"
+aimbotBtnLbl.TextColor3          = Color3.new(1, 1, 1)
+aimbotBtnLbl.TextSize            = 17
+aimbotBtnLbl.Font                = Enum.Font.GothamBold
+aimbotBtnLbl.ZIndex              = 13
+aimbotBtnLbl.Parent              = aimbotToggleFrame
+
+aimbotToggleFrame.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		aimbotToggleFrame.BackgroundTransparency = 0.35
+		aimbotEnabled = not aimbotEnabled
+		if aimbotEnabled then
+			-- BOTH label and button color update correctly now
+			aimbotBtnLbl.Text                     = "AIMBOT: ON"
+			aimbotToggleFrame.BackgroundColor3    = Color3.fromRGB(20, 130, 40)
+			aimbotStatusLbl.Text                  = "ON"
+			aimbotStatusLbl.TextColor3            = Color3.fromRGB(60, 220, 80)
+		else
+			aimbotBtnLbl.Text                     = "AIMBOT: OFF"
+			aimbotToggleFrame.BackgroundColor3    = Color3.fromRGB(80, 20, 20)
+			aimbotStatusLbl.Text                  = "OFF"
+			aimbotStatusLbl.TextColor3            = Color3.fromRGB(180, 60, 60)
+			aimbotTargetLbl.Text                  = "No target"
+			aimbotTargetLbl.TextColor3            = Color3.fromRGB(55, 85, 115)
+		end
+	end
+end)
+aimbotToggleFrame.InputEnded:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		aimbotToggleFrame.BackgroundTransparency = 0
+	end
+end)
+
+-- ================================
+-- AIMBOT LOGIC
+-- Runs every frame via RenderStepped
+-- Finds nearest player by distance,
+-- skips yourself, locks camera CFrame
+-- ================================
+-- Shoots a raycast from our root to the target.
+-- Returns true if nothing solid is blocking the line of sight.
+local function canSeeTarget(myRoot, targetPart)
+	local origin    = myRoot.Position
+	local targetPos = targetPart.Position
+	local direction = (targetPos - origin)
+
+	-- Build a raycast filter that ignores our own character
+	-- and the target's character so the ray doesn't hit them
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = {character, targetPart.Parent}
+
+	local result = workspace:Raycast(origin, direction, rayParams)
+
+	-- If nothing was hit the path is clear = visible
+	-- If something was hit the target is behind a wall/object
+	return result == nil
+end
+
+local function getNearestPlayer()
+	local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+	if not myRoot then return nil end
+
+	local nearest     = nil
+	local nearestDist = math.huge
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		-- never target yourself
+		if p == player then continue end
+
+		local char = p.Character
+		if not char then continue end
+
+		local root = char:FindFirstChild("HumanoidRootPart")
+		local head = char:FindFirstChild("Head")
+		local hum  = char:FindFirstChildOfClass("Humanoid")
+		if not root or not hum then continue end
+
+		-- skip dead players
+		if hum.Health <= 0 then continue end
+
+		local dist = (myRoot.Position - root.Position).Magnitude
+
+		-- RANGE CHECK: skip players outside the set range
+		if dist > AIMBOT_RANGE then continue end
+
+		-- VISIBLE CHECK: raycast to head — skip if behind a wall/object
+		local checkPart = head or root
+		if not canSeeTarget(myRoot, checkPart) then continue end
+
+		if dist < nearestDist then
+			nearestDist = dist
+			nearest     = char
+		end
+	end
+
+	return nearest
+end
+
+RunService.RenderStepped:Connect(function()
+	if not aimbotEnabled then return end
+
+	local target = getNearestPlayer()
+	if not target then
+		-- No visible target - check if anyone is nearby but blocked
+		local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+		local anyNearby = false
+		if myRoot then
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p == player then continue end
+				local char = p.Character
+				if not char then continue end
+				local root = char:FindFirstChild("HumanoidRootPart")
+				local hum = char:FindFirstChildOfClass("Humanoid")
+				if root and hum and hum.Health > 0 then
+					local dist = (myRoot.Position - root.Position).Magnitude
+					if dist <= AIMBOT_RANGE then
+						anyNearby = true
+						break
+					end
+				end
+			end
+		end
+		aimbotTargetLbl.Text = anyNearby and "Blocked by object" or "No target"
+		aimbotTargetLbl.TextColor3 = anyNearby
+			and Color3.fromRGB(255, 160, 40)   -- orange = nearby but blocked
+			or  Color3.fromRGB(55, 85, 115)    -- grey = nobody around
+		return
+	end
+
+	-- Pick which part to aim at based on aimMode
+	local aimPart
+
+	if aimMode == "head" then
+		-- Always aim at head
+		aimPart = target:FindFirstChild("Head")
+			or target:FindFirstChild("HumanoidRootPart")
+
+	elseif aimMode == "random" then
+		-- Pick a completely random body part every frame for jittery spread
+		local parts = {}
+		for _, v in ipairs(target:GetChildren()) do
+			if v:IsA("BasePart") then
+				table.insert(parts, v)
+			end
+		end
+		if #parts > 0 then
+			aimPart = parts[math.random(1, #parts)]
+		else
+			aimPart = target:FindFirstChild("HumanoidRootPart")
+		end
+
+	elseif aimMode == "body" then
+		-- Randomly pick a non-head body part
+		local bodyParts = {"UpperTorso", "LowerTorso", "HumanoidRootPart",
+			"LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg",
+			"LeftLowerArm", "RightLowerArm", "LeftLowerLeg", "RightLowerLeg"}
+		local found = {}
+		for _, name in ipairs(bodyParts) do
+			local p = target:FindFirstChild(name)
+			if p then table.insert(found, p) end
+		end
+		if #found > 0 then
+			aimPart = found[math.random(1, #found)]
+		else
+			aimPart = target:FindFirstChild("HumanoidRootPart")
+		end
+	end
+
+	if not aimPart then return end
+
+	-- show who we're locked onto + which part
+	local targetPlayer = Players:GetPlayerFromCharacter(target)
+	local partName = aimPart.Name
+	aimbotTargetLbl.Text      = targetPlayer and ("-> " .. targetPlayer.Name .. " [" .. partName .. "]") or "-> Unknown"
+	aimbotTargetLbl.TextColor3 = Color3.fromRGB(60, 220, 80)
+
+	-- lock camera: keep current position, rotate to face target
+	local camPos    = camera.CFrame.Position
+	local targetPos = aimPart.Position
+	camera.CFrame   = CFrame.lookAt(camPos, targetPos)
+end)
+
+-- ================================
+-- APPLY FUNCTIONS
+-- ================================
+function applyWalk()
+	if humanoid and humanoid.Parent then humanoid.WalkSpeed = walkValue end
+	walkNumLbl.Text = tostring(walkValue)
+	local p = (walkValue - WALK_MIN) / (WALK_MAX - WALK_MIN)
+	walkFill.Size      = UDim2.new(p, 0, 1, 0)
+	walkThumb.Position = UDim2.new(p, 0, 0.5, 0)
+end
+
+function applyJump()
+	if humanoid and humanoid.Parent then humanoid.JumpPower = jumpValue end
+	jumpNumLbl.Text = tostring(jumpValue)
+	local p = (jumpValue - JUMP_MIN) / (JUMP_MAX - JUMP_MIN)
+	jumpFill.Size      = UDim2.new(p, 0, 1, 0)
+	jumpThumb.Position = UDim2.new(p, 0, 0.5, 0)
+end
+
+-- ================================
+-- TOGGLE HUB
+-- ================================
+local function doToggle()
+	hubVisible = not hubVisible
+	panel.Visible = hubVisible
+	toggleLabel.Text = hubVisible and "CLOSE\nHUB" or "OPEN\nHUB"
+	toggleBtn.BackgroundColor3 = hubVisible
+		and Color3.fromRGB(210, 45, 55)
+		or  Color3.fromRGB(0, 140, 255)
+end
+
+toggleBtn.InputBegan:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		dragWhat          = "button"
+		dragStartMouse    = inp.Position
+		dragStartPos      = toggleBtn.Position
+		movedWhileDragging = false
+		doToggle()
+		toggleBtn.BackgroundTransparency = 0.3
+	end
+end)
+
+-- ================================
+-- GLOBAL DRAG HANDLER
+-- ================================
+UserInputService.InputChanged:Connect(function(inp)
+	if inp.UserInputType ~= Enum.UserInputType.MouseMovement
+	and inp.UserInputType ~= Enum.UserInputType.Touch then return end
+
+	if dragWhat == "button" and dragStartMouse then
+		local delta = inp.Position - dragStartMouse
+		if math.abs(delta.X) > 8 or math.abs(delta.Y) > 8 then
+			if not movedWhileDragging then
+				doToggle() -- undo toggle — user is dragging not tapping
+			end
+			movedWhileDragging = true
+			toggleBtn.Position = UDim2.new(
+				dragStartPos.X.Scale, dragStartPos.X.Offset + delta.X,
+				dragStartPos.Y.Scale, dragStartPos.Y.Offset + delta.Y
+			)
+		end
+	elseif dragWhat == "walk" then
+		walkValue = getSliderValue(inp.Position, walkTrack, WALK_MIN, WALK_MAX)
+		applyWalk()
+	elseif dragWhat == "jump" then
+		jumpValue = getSliderValue(inp.Position, jumpTrack, JUMP_MIN, JUMP_MAX)
+		applyJump()
+	elseif dragWhat == "range" then
+		AIMBOT_RANGE = getSliderValue(inp.Position, rangeTrack, AIMBOT_RANGE_MIN, AIMBOT_RANGE_MAX)
+		updateRangeUI()
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(inp)
+	if inp.UserInputType == Enum.UserInputType.MouseButton1
+	or inp.UserInputType == Enum.UserInputType.Touch then
+		toggleBtn.BackgroundTransparency = 0
+		dragWhat          = nil
+		dragStartMouse    = nil
+		movedWhileDragging = false
+	end
+end)
+
+-- M key toggle on PC
+UserInputService.InputBegan:Connect(function(inp, gpe)
+	if gpe then return end
+	if inp.KeyCode == Enum.KeyCode.M then doToggle() end
+end)
+
+-- ================================
+-- INSTANT TOUCH FOR ROBLOX MOBILE
+-- ================================
+local function fixInstantTouch()
+	local touchGui = player.PlayerGui:WaitForChild("TouchGui", 10)
+	if not touchGui then return end
+	local touchFrame = touchGui:WaitForChild("TouchControlFrame", 10)
+	if not touchFrame then return end
+
+	local jumpButton = touchFrame:FindFirstChild("JumpButton")
+	if jumpButton then
+		jumpButton.InputBegan:Connect(function(inp)
+			if inp.UserInputType == Enum.UserInputType.Touch then
+				if humanoid and humanoid.Parent then
+					humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+				end
+			end
+		end)
+	end
+
+	local joystick = touchFrame:FindFirstChild("DynamicThumbstickFrame")
+		or touchFrame:FindFirstChild("ThumbstickFrame")
+	if joystick then
+		joystick.InputBegan:Connect(function(inp)
+			if inp.UserInputType == Enum.UserInputType.Touch then
+				if humanoid and humanoid.Parent then
+					humanoid:ChangeState(Enum.HumanoidStateType.Running)
+				end
+			end
+		end)
+	end
+end
+
+local function applyInstantSettings()
+	if humanoid and humanoid.Parent then
+		humanoid.AutoJumpEnabled = false
+		humanoid.JumpPower       = jumpValue
+		humanoid.WalkSpeed       = walkValue
+	end
+end
+
+task.defer(fixInstantTouch)
+applyInstantSettings()
+
+-- ================================
+-- RESPAWN
+-- ================================
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	humanoid  = newChar:WaitForChild("Humanoid")
+	humanoid.WalkSpeed = walkValue
+	humanoid.JumpPower = jumpValue
+	applyInstantSettings()
+	task.wait(0.5)
+	fixInstantTouch()
+end)
+
+-- ================================
+-- INIT
+-- ================================
+applyWalk()
+applyJump()
+updateRangeUI()

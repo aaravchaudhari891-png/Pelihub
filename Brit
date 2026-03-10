@@ -13,3 +13,66 @@ local SMOOTH_ORBIT_SPEED    = 4
 local SMOOTH_ORBIT_SMOOTH   = 0.15
 local smoothOrbitAngle      = 0
 local smoothOrbitConnection = nil
+
+-- ── ORBIT AURA ──────────────────────────────────────────
+CombatTab:CreateSection("Orbit")
+
+CombatTab:CreateToggle({
+    Name         = "Orbit Aura",
+    CurrentValue = FeatureStates.OrbitAura,
+    Flag         = "OrbitAura",
+    Callback     = function(on)
+        FeatureStates.OrbitAura = on
+        if on then
+            orbitConnection = RunService.Stepped:Connect(function()
+                if not character or not hrp then return end
+                hrp.CFrame = CFrame.new(VOID_POS)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                local enemy = getClosestEnemy()
+                if enemy and enemy.Character then
+                    local eh = enemy.Character:FindFirstChild("HumanoidRootPart")
+                    if eh then
+                        orbitAngle = orbitAngle + ORBIT_SPEED
+                        local x = math.cos(math.rad(orbitAngle)) * ORBIT_RADIUS
+                        local z = math.sin(math.rad(orbitAngle)) * ORBIT_RADIUS
+                        Camera.CFrame = CFrame.new(VOID_POS, eh.Position + Vector3.new(x, 5, z))
+                    end
+                end
+            end)
+        else
+            if orbitConnection then orbitConnection:Disconnect(); orbitConnection = nil end
+            if hrp then hrp.CFrame = CFrame.new(0, 5, 0) end
+            if character then Camera.CameraSubject = character:FindFirstChild("Humanoid") end
+        end
+        saveSettings()
+    end,
+})
+
+CombatTab:CreateToggle({
+    Name         = " Smooth Orbit",
+    CurrentValue = FeatureStates.SmoothOrbit,
+    Flag         = "SmoothOrbit",
+    Callback     = function(on)
+        FeatureStates.SmoothOrbit = on
+        if on then
+            smoothOrbitAngle = 0
+            smoothOrbitConnection = RunService.RenderStepped:Connect(function()
+                if not hrp then return end
+                smoothOrbitAngle = (smoothOrbitAngle + SMOOTH_ORBIT_SPEED) % 360
+                local rad    = math.rad(smoothOrbitAngle)
+                local target = VOID_POS + Vector3.new(math.cos(rad)*SMOOTH_ORBIT_RADIUS, SMOOTH_ORBIT_HEIGHT, math.sin(rad)*SMOOTH_ORBIT_RADIUS)
+                hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(target), SMOOTH_ORBIT_SMOOTH)
+                local enemy = getClosestEnemy()
+                if enemy and enemy.Character then
+                    local eh = enemy.Character:FindFirstChild("HumanoidRootPart")
+                    if eh then Camera.CFrame = CFrame.new(hrp.Position, eh.Position) end
+                end
+            end)
+        else
+            if smoothOrbitConnection then smoothOrbitConnection:Disconnect(); smoothOrbitConnection = nil end
+            if hrp then hrp.CFrame = CFrame.new(0, 50, 0) end
+            if character then Camera.CameraSubject = character:FindFirstChild("Humanoid") end
+        end
+        saveSettings()
+    end,
+})

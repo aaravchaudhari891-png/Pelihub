@@ -1,77 +1,406 @@
-------------------------------------------------------------
--- ORBIT VARS
-------------------------------------------------------------
-local VOID_POS              = Vector3.new(0, -500, 0)
-local ORBIT_RADIUS          = 10
-local ORBIT_SPEED           = 2
-local orbitAngle            = 0
-local orbitConnection       = nil
-local SMOOTH_ORBIT_RADIUS   = 4
-local SMOOTH_ORBIT_HEIGHT   = 5
-local SMOOTH_ORBIT_SPEED    = 4
-local SMOOTH_ORBIT_SMOOTH   = 0.15
-local smoothOrbitAngle      = 0
-local smoothOrbitConnection = nil
+-- Fast Void Spam + Body Teleport Loop
+-- For Rivals Game (PC & Mobile Compatible)
 
--- ── ORBIT AURA ──────────────────────────────────────────
-CombatTab:CreateSection("Orbit")
+local player = game:GetService("Players").LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local userInputService = game:GetService("UserInputService")
+local tweenService = game:GetService("TweenService")
+local debris = game:GetService("Debris")
+local runService = game:GetService("RunService")
 
-CombatTab:CreateToggle({
-    Name         = "Orbit Aura",
-    CurrentValue = FeatureStates.OrbitAura,
-    Flag         = "OrbitAura",
-    Callback     = function(on)
-        FeatureStates.OrbitAura = on
-        if on then
-            orbitConnection = RunService.Stepped:Connect(function()
-                if not character or not hrp then return end
-                hrp.CFrame = CFrame.new(VOID_POS)
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                local enemy = getClosestEnemy()
-                if enemy and enemy.Character then
-                    local eh = enemy.Character:FindFirstChild("HumanoidRootPart")
-                    if eh then
-                        orbitAngle = orbitAngle + ORBIT_SPEED
-                        local x = math.cos(math.rad(orbitAngle)) * ORBIT_RADIUS
-                        local z = math.sin(math.rad(orbitAngle)) * ORBIT_RADIUS
-                        Camera.CFrame = CFrame.new(VOID_POS, eh.Position + Vector3.new(x, 5, z))
-                    end
+-- Configuration
+local TELEPORT_RANGE = 50 -- Maximum distance for random void teleports
+local TELEPORT_SPEED = 0.1 -- Time between teleports (lower = faster)
+local LOOP_ENABLED = false -- Start disabled
+local teleporting = false
+local loopConnection = nil
+
+-- Create Main GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "VoidWallbangGUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- Create Main Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 250, 0, 150)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -75)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BackgroundTransparency = 0.2
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+-- Add Corner Radius
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 10)
+uiCorner.Parent = mainFrame
+
+-- Add Stroke/Border
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Thickness = 2
+uiStroke.Color = Color3.fromRGB(100, 100, 255)
+uiStroke.Parent = mainFrame
+
+-- Title
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 30)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "FAST VOID SPAM"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextScaled = true
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Parent = mainFrame
+
+-- Status Text
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 20)
+statusLabel.Position = UDim2.new(0, 0, 0, 30)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: OFF"
+statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusLabel.TextScaled = true
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.Parent = mainFrame
+
+-- Toggle Button
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0.8, 0, 0, 40)
+toggleButton.Position = UDim2.new(0.1, 0, 0, 60)
+toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+toggleButton.Text = "START LOOP"
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.TextScaled = true
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.Parent = mainFrame
+
+-- Button Corner
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 5)
+buttonCorner.Parent = toggleButton
+
+-- Speed Slider Label
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(0.4, 0, 0, 20)
+speedLabel.Position = UDim2.new(0.05, 0, 0, 105)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Speed:"
+speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedLabel.TextScaled = true
+speedLabel.Font = Enum.Font.Gotham
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.Parent = mainFrame
+
+-- Speed Value Label
+local speedValueLabel = Instance.new("TextLabel")
+speedValueLabel.Size = UDim2.new(0.3, 0, 0, 20)
+speedValueLabel.Position = UDim2.new(0.65, 0, 0, 105)
+speedValueLabel.BackgroundTransparency = 1
+speedValueLabel.Text = "0.1s"
+speedValueLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+speedValueLabel.TextScaled = true
+speedValueLabel.Font = Enum.Font.GothamBold
+speedValueLabel.TextXAlignment = Enum.TextXAlignment.Right
+speedValueLabel.Parent = mainFrame
+
+-- Speed Slider
+local sliderBar = Instance.new("Frame")
+sliderBar.Size = UDim2.new(0.9, 0, 0, 5)
+sliderBar.Position = UDim2.new(0.05, 0, 0, 130)
+sliderBar.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+sliderBar.BorderSizePixel = 0
+sliderBar.Parent = mainFrame
+
+local sliderCorner = Instance.new("UICorner")
+sliderCorner.CornerRadius = UDim.new(1, 0)
+sliderCorner.Parent = sliderBar
+
+local sliderButton = Instance.new("TextButton")
+sliderButton.Size = UDim2.new(0, 15, 0, 15)
+sliderButton.Position = UDim2.new(0.9, -7.5, 0, -5)
+sliderButton.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+sliderButton.Text = ""
+sliderButton.BorderSizePixel = 0
+sliderButton.Parent = sliderBar
+
+local sliderButtonCorner = Instance.new("UICorner")
+sliderButtonCorner.CornerRadius = UDim.new(1, 0)
+sliderButtonCorner.Parent = sliderButton
+
+-- Close Button (X)
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 25, 0, 25)
+closeButton.Position = UDim2.new(1, -25, 0, 2)
+closeButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.TextScaled = true
+closeButton.Font = Enum.Font.GothamBold
+closeButton.Parent = mainFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 5)
+closeCorner.Parent = closeButton
+
+-- Mobile Control Button
+local mobileButton = Instance.new("TextButton")
+mobileButton.Size = UDim2.new(0, 100, 0, 100)
+mobileButton.Position = UDim2.new(0.5, -50, 0.85, 0)
+mobileButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+mobileButton.BackgroundTransparency = 0.2
+mobileButton.Text = "VOID\nSPAM"
+mobileButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+mobileButton.TextScaled = true
+mobileButton.Font = Enum.Font.GothamBold
+mobileButton.Visible = false
+mobileButton.Parent = screenGui
+
+local mobileCorner = Instance.new("UICorner")
+mobileCorner.CornerRadius = UDim.new(1, 0)
+mobileCorner.Parent = mobileButton
+
+-- Functions
+function updateUI()
+    if LOOP_ENABLED then
+        toggleButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+        toggleButton.Text = "STOP LOOP"
+        statusLabel.Text = "Status: ACTIVE"
+        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        mobileButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+        mobileButton.Text = "STOP\nSPAM"
+    else
+        toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        toggleButton.Text = "START LOOP"
+        statusLabel.Text = "Status: OFF"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        mobileButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+        mobileButton.Text = "VOID\nSPAM"
+    end
+end
+
+function updateSpeedDisplay()
+    speedValueLabel.Text = string.format("%.1fs", TELEPORT_SPEED)
+    -- Update slider position (0.05 to 0.5 range mapped to 0-1)
+    local sliderPos = (TELEPORT_SPEED - 0.05) / 0.45
+    sliderButton.Position = UDim2.new(sliderPos, -7.5, 0, -5)
+end
+
+function getRandomPosition()
+    local currentPos = humanoidRootPart.Position
+    local randomX = currentPos.X + math.random(-TELEPORT_RANGE, TELEPORT_RANGE)
+    local randomZ = currentPos.Z + math.random(-TELEPORT_RANGE, TELEPORT_RANGE)
+    local randomY = currentPos.Y
+    
+    return Vector3.new(randomX, randomY, randomZ)
+end
+
+function findDeadEnemy()
+    for _, otherPlayer in ipairs(game:GetService("Players"):GetPlayers()) do
+        if otherPlayer ~= player and otherPlayer.Character then
+            local humanoid = otherPlayer.Character:FindFirstChild("Humanoid")
+            if humanoid and humanoid.Health <= 0 then
+                local root = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    return root
                 end
-            end)
-        else
-            if orbitConnection then orbitConnection:Disconnect(); orbitConnection = nil end
-            if hrp then hrp.CFrame = CFrame.new(0, 5, 0) end
-            if character then Camera.CameraSubject = character:FindFirstChild("Humanoid") end
+            end
         end
-        saveSettings()
-    end,
-})
+    end
+    return nil
+end
 
-CombatTab:CreateToggle({
-    Name         = " Smooth Orbit",
-    CurrentValue = FeatureStates.SmoothOrbit,
-    Flag         = "SmoothOrbit",
-    Callback     = function(on)
-        FeatureStates.SmoothOrbit = on
-        if on then
-            smoothOrbitAngle = 0
-            smoothOrbitConnection = RunService.RenderStepped:Connect(function()
-                if not hrp then return end
-                smoothOrbitAngle = (smoothOrbitAngle + SMOOTH_ORBIT_SPEED) % 360
-                local rad    = math.rad(smoothOrbitAngle)
-                local target = VOID_POS + Vector3.new(math.cos(rad)*SMOOTH_ORBIT_RADIUS, SMOOTH_ORBIT_HEIGHT, math.sin(rad)*SMOOTH_ORBIT_RADIUS)
-                hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(target), SMOOTH_ORBIT_SMOOTH)
-                local enemy = getClosestEnemy()
-                if enemy and enemy.Character then
-                    local eh = enemy.Character:FindFirstChild("HumanoidRootPart")
-                    if eh then Camera.CFrame = CFrame.new(hrp.Position, eh.Position) end
-                end
-            end)
-        else
-            if smoothOrbitConnection then smoothOrbitConnection:Disconnect(); smoothOrbitConnection = nil end
-            if hrp then hrp.CFrame = CFrame.new(0, 50, 0) end
-            if character then Camera.CameraSubject = character:FindFirstChild("Humanoid") end
+-- Fast teleport loop
+function startTeleportLoop()
+    if teleporting then return end
+    teleporting = true
+    
+    -- Create visual effect for active state
+    local loopEffect = Instance.new("Part")
+    loopEffect.Size = Vector3.new(3, 3, 3)
+    loopEffect.Position = humanoidRootPart.Position
+    loopEffect.Anchored = true
+    loopEffect.CanCollide = false
+    loopEffect.Material = Enum.Material.Neon
+    loopEffect.BrickColor = BrickColor.new("Bright violet")
+    loopEffect.Parent = workspace
+    
+    -- Fade in/out effect
+    spawn(function()
+        while teleporting and loopEffect do
+            tweenService:Create(loopEffect, TweenInfo.new(0.5), {Transparency = 0.3}):Play()
+            wait(0.5)
+            tweenService:Create(loopEffect, TweenInfo.new(0.5), {Transparency = 0.7}):Play()
+            wait(0.5)
         end
-        saveSettings()
-    end,
-})
+    end)
+    
+    -- Fast teleport loop
+    while teleporting and LOOP_ENABLED do
+        -- Quick random teleport
+        local randomPos = getRandomPosition()
+        humanoidRootPart.CFrame = CFrame.new(randomPos)
+        
+        -- Quick void effect
+        local voidEffect = Instance.new("Part")
+        voidEffect.Size = Vector3.new(2, 2, 2)
+        voidEffect.Position = randomPos
+        voidEffect.Anchored = true
+        voidEffect.CanCollide = false
+        voidEffect.Material = Enum.Material.Neon
+        voidEffect.BrickColor = BrickColor.new("Bright violet")
+        voidEffect.Parent = workspace
+        
+        -- Fast fade
+        tweenService:Create(voidEffect, TweenInfo.new(TELEPORT_SPEED), {Transparency = 1}):Play()
+        debris:AddItem(voidEffect, TELEPORT_SPEED)
+        
+        wait(TELEPORT_SPEED / 2) -- Half speed for next teleport
+        
+        -- Find and teleport to dead enemy
+        local enemyRoot = findDeadEnemy()
+        if enemyRoot then
+            humanoidRootPart.CFrame = enemyRoot.CFrame + Vector3.new(0, 3, 0)
+            
+            -- Quick enemy effect
+            local enemyEffect = Instance.new("Part")
+            enemyEffect.Size = Vector3.new(3, 3, 3)
+            enemyEffect.Position = enemyRoot.Position
+            enemyEffect.Anchored = true
+            enemyEffect.CanCollide = false
+            enemyEffect.Material = Enum.Material.Neon
+            enemyEffect.BrickColor = BrickColor.new("Bright red")
+            enemyEffect.Parent = workspace
+            
+            tweenService:Create(enemyEffect, TweenInfo.new(TELEPORT_SPEED), {Transparency = 1, Size = Vector3.new(8, 8, 8)}):Play()
+            debris:AddItem(enemyEffect, TELEPORT_SPEED)
+        end
+        
+        wait(TELEPORT_SPEED / 2)
+        
+        -- Update loop effect position
+        if loopEffect then
+            loopEffect.Position = humanoidRootPart.Position
+        end
+    end
+    
+    -- Cleanup
+    if loopEffect then
+        loopEffect:Destroy()
+    end
+    teleporting = false
+end
+
+function stopTeleportLoop()
+    LOOP_ENABLED = false
+    teleporting = false
+    updateUI()
+end
+
+-- Slider drag functionality
+local dragging = false
+sliderButton.MouseButton1Down:Connect(function()
+    dragging = true
+end)
+
+userInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+userInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local mousePos = userInputService:GetMouseLocation()
+        local sliderPos = mainFrame.AbsolutePosition.X + sliderBar.AbsolutePosition.X
+        local relativeX = math.clamp(mousePos.X - sliderPos, 0, sliderBar.AbsoluteSize.X)
+        local percent = relativeX / sliderBar.AbsoluteSize.X
+        
+        -- Map 0-1 to 0.05-0.5
+        TELEPORT_SPEED = 0.05 + (percent * 0.45)
+        updateSpeedDisplay()
+    end
+end)
+
+-- Button Click Events
+toggleButton.MouseButton1Click:Connect(function()
+    LOOP_ENABLED = not LOOP_ENABLED
+    updateUI()
+    
+    if LOOP_ENABLED then
+        -- Start loop in background
+        spawn(startTeleportLoop)
+    else
+        stopTeleportLoop()
+    end
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    stopTeleportLoop()
+    screenGui:Destroy()
+end)
+
+mobileButton.MouseButton1Click:Connect(function()
+    LOOP_ENABLED = not LOOP_ENABLED
+    updateUI()
+    
+    if LOOP_ENABLED then
+        spawn(startTeleportLoop)
+    else
+        stopTeleportLoop()
+    end
+end)
+
+-- Mobile Detection
+if userInputService.TouchEnabled and not userInputService.KeyboardEnabled then
+    mobileButton.Visible = true
+    mainFrame.Size = UDim2.new(0, 300, 0, 200)
+    mainFrame.Position = UDim2.new(0.5, -150, 0.1, 0)
+end
+
+-- Make GUI movable
+local function makeDraggable(frame)
+    local dragToggle = nil
+    local dragSpeed = 0
+    local dragStart = nil
+    local startPos = nil
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            if dragToggle then
+                local delta = input.Position - dragStart
+                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+        end
+    end)
+
+    frame.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = false
+        end
+    end)
+end
+
+makeDraggable(mainFrame)
+
+-- Initialize UI
+updateUI()
+updateSpeedDisplay()
+
+print("=== FAST VOID SPAM LOADED ===")
+print("Click START LOOP for continuous teleporting")
+print("Adjust speed slider for faster/slower teleports")
+print("The script alternates between:")
+print("- Random void teleports")
+print("- Teleporting to dead enemy bodies")
+print("Mobile: Use the floating button")

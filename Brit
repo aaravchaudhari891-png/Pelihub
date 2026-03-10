@@ -1,0 +1,17 @@
+50,
+}
+
+------------------------------------------------------------
+-- ORBIT VARS
+------------------------------------------------------------
+local VOID_POS              = Vector3.new(0, -500, 0)
+local ORBIT_RADIUS          = 10
+local ORBIT_SPEED           = 2
+local orbitAngle            = 0
+local orbitConnection       = nil
+local SMOOTH_ORBIT_RADIUS   = 4
+local SMOOTH_ORBIT_HEIGHT   = 5
+local SMOOTH_ORBIT_SPEED    = 4
+local SMOOTH_ORBIT_SMOOTH   = 0.15
+local smoothOrbitAngle      = 0
+local smoothOrbitConnection = nil

@@ -1,210 +1,157 @@
--- Fast Void Spam + Body Teleport Loop
--- For Rivals Game (PC & Mobile Compatible)
+--[[
+    ╔══════════════════════════════════════════════════════╗
+    ║        STEAL BRAINROTS TRADING PLAZA                ║
+    ║             Shadow Suite  V2.0  (Delta)             ║
+    ║   Silent Aim · ESP · Auto-Farm · Speed · Teleport  ║
+    ╚══════════════════════════════════════════════════════╝
+    Works on Delta, Fluxus, Hydrogen and all mobile executors.
+    No Drawing API · No getrawmetatable · No newcclosure
+    Tap 🧠 button (bottom-right) to open/close.
+]]
 
-local player = game:GetService("Players").LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-local userInputService = game:GetService("UserInputService")
-local tweenService = game:GetService("TweenService")
-local debris = game:GetService("Debris")
-local runService = game:GetService("RunService")
+------------------------------------------------------------
+-- SERVICES
+------------------------------------------------------------
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Camera            = workspace.CurrentCamera
 
--- Configuration
-local TELEPORT_RANGE = 50 -- Maximum distance for random void teleports
-local TELEPORT_SPEED = 0.1 -- Time between teleports (lower = faster)
-local LOOP_ENABLED = false -- Start disabled
-local teleporting = false
-local loopConnection = nil
+local LocalPlayer = Players.LocalPlayer
+local character   = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local hrp         = character:WaitForChild("HumanoidRootPart")
 
--- Create Main GUI
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "VoidWallbangGUI"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = player:WaitForChild("PlayerGui")
+LocalPlayer.CharacterAdded:Connect(function(c)
+    character = c
+    hrp = c:WaitForChild("HumanoidRootPart")
+end)
 
--- Create Main Frame
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 250, 0, 150)
-mainFrame.Position = UDim2.new(0, 20, 0.5, -75)
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-mainFrame.BackgroundTransparency = 0.2
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Parent = screenGui
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 
--- Add Corner Radius
-local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 10)
-uiCorner.Parent = mainFrame
+------------------------------------------------------------
+-- DEFENSE STATES
+------------------------------------------------------------
+local DEF = {
+    ANTI_RAGDOLL = false,
+    NO_KNOCKBACK = false,
+    ANTI_SLOW    = false,
+    ANTI_VOID    = false,
+}
+local defConns = {}
 
--- Add Stroke/Border
-local uiStroke = Instance.new("UIStroke")
-uiStroke.Thickness = 2
-uiStroke.Color = Color3.fromRGB(100, 100, 255)
-uiStroke.Parent = mainFrame
+local function defDisconnect(key)
+    if defConns[key] then defConns[key]:Disconnect(); defConns[key]=nil end
+end
 
--- Title
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 0, 30)
-titleLabel.Position = UDim2.new(0, 0, 0, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "FAST VOID SPAM"
-titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleLabel.TextScaled = true
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.Parent = mainFrame
+local function def_antiRagdoll(on)
+    defDisconnect("ragdoll"); if not on then return end
+    defConns["ragdoll"] = RunService.Heartbeat:Connect(function()
+        if not DEF.ANTI_RAGDOLL then return end
+        local char = LocalPlayer.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Ragdoll
+        or st == Enum.HumanoidStateType.FallingDown
+        or st == Enum.HumanoidStateType.Physics then
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        end
+        if hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
+        for _, v in ipairs(char:GetDescendants()) do
+            if v:IsA("Motor6D") and not v.Enabled then
+                pcall(function() v.Enabled = true end)
+            end
+        end
+    end)
+end
 
--- Status Text
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, 0, 0, 20)
-statusLabel.Position = UDim2.new(0, 0, 0, 30)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Status: OFF"
-statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-statusLabel.TextScaled = true
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.Parent = mainFrame
+local function def_noKnockback(on)
+    defDisconnect("knockback"); if not on then return end
+    defConns["knockback"] = RunService.Heartbeat:Connect(function()
+        if not DEF.NO_KNOCKBACK then return end
+        local char = LocalPlayer.Character
+        local hrp2 = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp2 then return end
+        for _, v in ipairs(hrp2:GetChildren()) do
+            if v:IsA("BodyVelocity") or v:IsA("BodyForce") or v:IsA("BodyAngularVelocity") then
+                pcall(function() v:Destroy() end)
+            end
+        end
+    end)
+end
 
--- Toggle Button
-local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0.8, 0, 0, 40)
-toggleButton.Position = UDim2.new(0.1, 0, 0, 60)
-toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-toggleButton.Text = "START LOOP"
-toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleButton.TextScaled = true
-toggleButton.Font = Enum.Font.GothamBold
-toggleButton.Parent = mainFrame
+local function def_antiSlow(on)
+    defDisconnect("slow"); if not on then return end
+    defConns["slow"] = RunService.Heartbeat:Connect(function()
+        if not DEF.ANTI_SLOW then return end
+        local char = LocalPlayer.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        if hum.WalkSpeed < 13 then pcall(function() hum.WalkSpeed = 16 end) end
+        if hum.JumpPower  < 35 then pcall(function() hum.JumpPower  = 50 end) end
+    end)
+end
 
--- Button Corner
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 5)
-buttonCorner.Parent = toggleButton
+local _lastSafe = nil
+local function def_antiVoid(on)
+    defDisconnect("void"); if not on then return end
+    local t2 = 0
+    defConns["void"] = RunService.Heartbeat:Connect(function(dt)
+        if not DEF.ANTI_VOID then return end
+        local hrp2 = getHRP()
+        if not hrp2 then return end
+        t2 = t2 + dt
+        if t2 >= 2 then
+            t2 = 0
+            if hrp2.Position.Y > -50 then _lastSafe = hrp2.Position + Vector3.new(0,4,0) end
+        end
+        if hrp2.Position.Y < -100 and _lastSafe then
+            pcall(function() hrp2.CFrame = CFrame.new(_lastSafe) end)
+        end
+    end)
+end
 
--- Speed Slider Label
-local speedLabel = Instance.new("TextLabel")
-speedLabel.Size = UDim2.new(0.4, 0, 0, 20)
-speedLabel.Position = UDim2.new(0.05, 0, 0, 105)
-speedLabel.BackgroundTransparency = 1
-speedLabel.Text = "Speed:"
-speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-speedLabel.TextScaled = true
-speedLabel.Font = Enum.Font.Gotham
-speedLabel.TextXAlignment = Enum.TextXAlignment.Left
-speedLabel.Parent = mainFrame
 
--- Speed Value Label
-local speedValueLabel = Instance.new("TextLabel")
-speedValueLabel.Size = UDim2.new(0.3, 0, 0, 20)
-speedValueLabel.Position = UDim2.new(0.65, 0, 0, 105)
-speedValueLabel.BackgroundTransparency = 1
-speedValueLabel.Text = "0.1s"
-speedValueLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-speedValueLabel.TextScaled = true
-speedValueLabel.Font = Enum.Font.GothamBold
-speedValueLabel.TextXAlignment = Enum.TextXAlignment.Right
-speedValueLabel.Parent = mainFrame
 
--- Speed Slider
-local sliderBar = Instance.new("Frame")
-sliderBar.Size = UDim2.new(0.9, 0, 0, 5)
-sliderBar.Position = UDim2.new(0.05, 0, 0, 130)
-sliderBar.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-sliderBar.BorderSizePixel = 0
-sliderBar.Parent = mainFrame
+------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------
+local function getHRP()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
 
-local sliderCorner = Instance.new("UICorner")
-sliderCorner.CornerRadius = UDim.new(1, 0)
-sliderCorner.Parent = sliderBar
+local function getHumanoid()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
 
-local sliderButton = Instance.new("TextButton")
-sliderButton.Size = UDim2.new(0, 15, 0, 15)
-sliderButton.Position = UDim2.new(0.9, -7.5, 0, -5)
-sliderButton.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
-sliderButton.Text = ""
-sliderButton.BorderSizePixel = 0
-sliderButton.Parent = sliderBar
+local function isAlive(char)
+    if not char then return false end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    return h and h.Health > 0
+end
 
-local sliderButtonCorner = Instance.new("UICorner")
-sliderButtonCorner.CornerRadius = UDim.new(1, 0)
-sliderButtonCorner.Parent = sliderButton
-
--- Close Button (X)
-local closeButton = Instance.new("TextButton")
-closeButton.Size = UDim2.new(0, 25, 0, 25)
-closeButton.Position = UDim2.new(1, -25, 0, 2)
-closeButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-closeButton.Text = "X"
-closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeButton.TextScaled = true
-closeButton.Font = Enum.Font.GothamBold
-closeButton.Parent = mainFrame
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 5)
-closeCorner.Parent = closeButton
-
--- Mobile Control Button
-local mobileButton = Instance.new("TextButton")
-mobileButton.Size = UDim2.new(0, 100, 0, 100)
-mobileButton.Position = UDim2.new(0.5, -50, 0.85, 0)
-mobileButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
-mobileButton.BackgroundTransparency = 0.2
-mobileButton.Text = "VOID\nSPAM"
-mobileButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-mobileButton.TextScaled = true
-mobileButton.Font = Enum.Font.GothamBold
-mobileButton.Visible = false
-mobileButton.Parent = screenGui
-
-local mobileCorner = Instance.new("UICorner")
-mobileCorner.CornerRadius = UDim.new(1, 0)
-mobileCorner.Parent = mobileButton
-
--- Functions
-function updateUI()
-    if LOOP_ENABLED then
-        toggleButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-        toggleButton.Text = "STOP LOOP"
-        statusLabel.Text = "Status: ACTIVE"
-        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-        mobileButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-        mobileButton.Text = "STOP\nSPAM"
-    else
-        toggleButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        toggleButton.Text = "START LOOP"
-        statusLabel.Text = "Status: OFF"
-        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        mobileButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
-        mobileButton.Text = "VOID\nSPAM"
+local function safeCall(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        -- silently fail — Delta doesn't crash on pcall errors
     end
+    return ok
 end
 
-function updateSpeedDisplay()
-    speedValueLabel.Text = string.format("%.1fs", TELEPORT_SPEED)
-    -- Update slider position (0.05 to 0.5 range mapped to 0-1)
-    local sliderPos = (TELEPORT_SPEED - 0.05) / 0.45
-    sliderButton.Position = UDim2.new(sliderPos, -7.5, 0, -5)
-end
-
-function getRandomPosition()
-    local currentPos = humanoidRootPart.Position
-    local randomX = currentPos.X + math.random(-TELEPORT_RANGE, TELEPORT_RANGE)
-    local randomZ = currentPos.Z + math.random(-TELEPORT_RANGE, TELEPORT_RANGE)
-    local randomY = currentPos.Y
-    
-    return Vector3.new(randomX, randomY, randomZ)
-end
-
-function findDeadEnemy()
-    for _, otherPlayer in ipairs(game:GetService("Players"):GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character then
-            local humanoid = otherPlayer.Character:FindFirstChild("Humanoid")
-            if humanoid and humanoid.Health <= 0 then
-                local root = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if root then
-                    return root
+-- Find a remote anywhere in game by keyword
+local function findRemote(keywords)
+    local searchRoots = {ReplicatedStorage}
+    pcall(function() table.insert(searchRoots, LocalPlayer.PlayerGui) end)
+    for _, root in ipairs(searchRoots) do
+        for _, v in pairs(root:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                local lower = v.Name:lower()
+                for _, kw in ipairs(keywords) do
+                    if lower:find(kw:lower()) then return v end
                 end
             end
         end
@@ -212,195 +159,1252 @@ function findDeadEnemy()
     return nil
 end
 
--- Fast teleport loop
-function startTeleportLoop()
-    if teleporting then return end
-    teleporting = true
-    
-    -- Create visual effect for active state
-    local loopEffect = Instance.new("Part")
-    loopEffect.Size = Vector3.new(3, 3, 3)
-    loopEffect.Position = humanoidRootPart.Position
-    loopEffect.Anchored = true
-    loopEffect.CanCollide = false
-    loopEffect.Material = Enum.Material.Neon
-    loopEffect.BrickColor = BrickColor.new("Bright violet")
-    loopEffect.Parent = workspace
-    
-    -- Fade in/out effect
-    spawn(function()
-        while teleporting and loopEffect do
-            tweenService:Create(loopEffect, TweenInfo.new(0.5), {Transparency = 0.3}):Play()
-            wait(0.5)
-            tweenService:Create(loopEffect, TweenInfo.new(0.5), {Transparency = 0.7}):Play()
-            wait(0.5)
+local function fireRemote(remote, ...)
+    if not remote then return end
+    safeCall(function(...)
+        if remote:IsA("RemoteEvent") then
+            remote:FireServer(...)
+        elseif remote:IsA("RemoteFunction") then
+            remote:InvokeServer(...)
+        end
+    end, ...)
+end
+
+------------------------------------------------------------
+-- CONNECTIONS
+------------------------------------------------------------
+local Conns = {}
+local function cleanConn(k)
+    if Conns[k] then
+        safeCall(function() Conns[k]:Disconnect() end)
+        Conns[k] = nil
+    end
+end
+
+------------------------------------------------------------
+-- STATE
+------------------------------------------------------------
+local S = {
+    SA_ON        = false,
+    SA_FOV       = 150,
+    SA_PART      = "Head",
+    SA_PRIORITY  = "Crosshair",
+    SA_TEAM      = true,
+    SA_VIS       = false,
+
+    ESP_ON       = false,
+    ESP_NAMES    = true,
+    ESP_DIST     = true,
+    ESP_HP       = true,
+    ESP_BOXES    = true,
+    ESP_MAX_DIST = 1000,
+
+    AF_ON        = false,
+    AF_MODE      = "Collect",
+    AF_DELAY     = 1.2,
+    AF_RAND      = true,
+    AF_TP        = true,
+
+    SP_ON        = false,
+    SP_VAL       = 28,
+
+    TP_ANTIKICK  = true,
+    TP_DELAY     = 0.35,
+}
+
+------------------------------------------------------------
+-- ════════════════════════════════
+--   SILENT AIM
+--   Delta-safe: wraps the specific remote's InvokeServer
+--   directly on the object — no metamethod hooks needed.
+-- ════════════════════════════════
+------------------------------------------------------------
+local saActive      = false
+local saOrigInvoke  = nil
+local saRemote      = nil
+local saFOVGui      = nil
+local saFOVFrame    = nil
+local saFOVConn     = nil
+
+local function sa_getTarget()
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local camPos = Camera.CFrame.Position
+    local myHRP  = getHRP()
+    local best, bestVal = nil, math.huge
+
+    for _, v in pairs(Players:GetPlayers()) do
+        local skip = false
+        if v == LocalPlayer then skip = true end
+        if not skip and S.SA_TEAM and v.Team and LocalPlayer.Team and v.Team == LocalPlayer.Team then skip = true end
+        local char = v.Character
+        if not char then skip = true end
+        if not skip and not isAlive(char) then skip = true end
+        if not skip then
+            -- Pick aim part
+            local part
+            if S.SA_PART == "Head" then
+                part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+            elseif S.SA_PART == "Torso" then
+                part = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+            else
+                local bDist, bPart = math.huge, nil
+                for _, pn in ipairs({"Head","UpperTorso","HumanoidRootPart"}) do
+                    local p = char:FindFirstChild(pn)
+                    if p then
+                        local sp2, on2 = Camera:WorldToViewportPoint(p.Position)
+                        if on2 then
+                            local d = (Vector2.new(sp2.X,sp2.Y)-center).Magnitude
+                            if d < bDist then bDist=d; bPart=p end
+                        end
+                    end
+                end
+                part = bPart
+            end
+            if not part or not part.Parent then skip = true end
+            if not skip then
+                local ok, sp = pcall(function() return Camera:WorldToViewportPoint(part.Position) end)
+                if not ok or sp.Z <= 0 then skip = true end
+                if not skip then
+                    local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                    if screenDist > S.SA_FOV then skip = true end
+                    if not skip and S.SA_VIS then
+                        local rp = RaycastParams.new()
+                        rp.FilterType = Enum.RaycastFilterType.Exclude
+                        rp.FilterDescendantsInstances = {char, character}
+                        local hit = workspace:Raycast(camPos, part.Position - camPos, rp)
+                        if hit then skip = true end
+                    end
+                    if not skip then
+                        local metric
+                        if S.SA_PRIORITY == "Crosshair" then
+                            metric = screenDist
+                        elseif S.SA_PRIORITY == "Distance" then
+                            metric = myHRP and (part.Position - myHRP.Position).Magnitude or screenDist
+                        elseif S.SA_PRIORITY == "Health" then
+                            local hum = char:FindFirstChildOfClass("Humanoid")
+                            metric = hum and hum.Health or 100
+                        else
+                            metric = screenDist
+                        end
+                        if metric < bestVal then bestVal = metric; best = part end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- FOV circle using ScreenGui (no Drawing API needed)
+local function sa_buildFOVGui()
+    if saFOVGui then saFOVGui:Destroy(); saFOVGui=nil; saFOVFrame=nil end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ShadowSAFOV"; sg.ResetOnSpawn = false
+    sg.IgnoreGuiInset = true; sg.DisplayOrder = 50
+    safeCall(function() sg.Parent = game:GetService("CoreGui") end)
+    if not sg.Parent then sg.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    local f = Instance.new("Frame", sg)
+    local d = S.SA_FOV * 2
+    f.Size = UDim2.new(0, d, 0, d)
+    f.Position = UDim2.new(0.5, 0, 0.5, 0)
+    f.AnchorPoint = Vector2.new(0.5, 0.5)
+    f.BackgroundTransparency = 1; f.BorderSizePixel = 0
+    Instance.new("UICorner", f).CornerRadius = UDim.new(1, 0)
+    local stroke = Instance.new("UIStroke", f)
+    stroke.Color = Color3.fromRGB(255, 255, 255); stroke.Thickness = 1.5; stroke.Transparency = 0.2
+    saFOVGui = sg; saFOVFrame = f; saFOVFrame._stroke = stroke
+end
+
+local function sa_updateFOVColor(locked)
+    if saFOVFrame and saFOVFrame._stroke then
+        saFOVFrame._stroke.Color = locked
+            and Color3.fromRGB(255, 50, 50)
+            or  Color3.fromRGB(255, 255, 255)
+    end
+end
+
+-- Hook: wrap InvokeServer on the remote object directly
+-- This is the only method that works on Delta/Fluxus/Hydrogen
+local function sa_hookRemote(remote)
+    if not remote then return false end
+    local ok, origFn = pcall(function() return remote.InvokeServer end)
+    if not ok or type(origFn) ~= "function" then return false end
+
+    saOrigInvoke = origFn
+    saRemote     = remote
+
+    safeCall(function()
+        remote.InvokeServer = function(self, ...)
+            if S.SA_ON then
+                local target = sa_getTarget()
+                if target then
+                    local oldCF = Camera.CFrame
+                    Camera.CFrame = CFrame.new(oldCF.Position, target.Position)
+                    local r = saOrigInvoke(self, ...)
+                    Camera.CFrame = oldCF
+                    return r
+                end
+            end
+            return saOrigInvoke(self, ...)
         end
     end)
-    
-    -- Fast teleport loop
-    while teleporting and LOOP_ENABLED do
-        -- Quick random teleport
-        local randomPos = getRandomPosition()
-        humanoidRootPart.CFrame = CFrame.new(randomPos)
-        
-        -- Quick void effect
-        local voidEffect = Instance.new("Part")
-        voidEffect.Size = Vector3.new(2, 2, 2)
-        voidEffect.Position = randomPos
-        voidEffect.Anchored = true
-        voidEffect.CanCollide = false
-        voidEffect.Material = Enum.Material.Neon
-        voidEffect.BrickColor = BrickColor.new("Bright violet")
-        voidEffect.Parent = workspace
-        
-        -- Fast fade
-        tweenService:Create(voidEffect, TweenInfo.new(TELEPORT_SPEED), {Transparency = 1}):Play()
-        debris:AddItem(voidEffect, TELEPORT_SPEED)
-        
-        wait(TELEPORT_SPEED / 2) -- Half speed for next teleport
-        
-        -- Find and teleport to dead enemy
-        local enemyRoot = findDeadEnemy()
-        if enemyRoot then
-            humanoidRootPart.CFrame = enemyRoot.CFrame + Vector3.new(0, 3, 0)
-            
-            -- Quick enemy effect
-            local enemyEffect = Instance.new("Part")
-            enemyEffect.Size = Vector3.new(3, 3, 3)
-            enemyEffect.Position = enemyRoot.Position
-            enemyEffect.Anchored = true
-            enemyEffect.CanCollide = false
-            enemyEffect.Material = Enum.Material.Neon
-            enemyEffect.BrickColor = BrickColor.new("Bright red")
-            enemyEffect.Parent = workspace
-            
-            tweenService:Create(enemyEffect, TweenInfo.new(TELEPORT_SPEED), {Transparency = 1, Size = Vector3.new(8, 8, 8)}):Play()
-            debris:AddItem(enemyEffect, TELEPORT_SPEED)
-        end
-        
-        wait(TELEPORT_SPEED / 2)
-        
-        -- Update loop effect position
-        if loopEffect then
-            loopEffect.Position = humanoidRootPart.Position
-        end
-    end
-    
-    -- Cleanup
-    if loopEffect then
-        loopEffect:Destroy()
-    end
-    teleporting = false
+    return true
 end
 
-function stopTeleportLoop()
-    LOOP_ENABLED = false
-    teleporting = false
-    updateUI()
-end
+-- Also wrap FireServer for RemoteEvent remotes
+local function sa_hookRemoteEvent(remote)
+    if not remote then return false end
+    local ok, origFn = pcall(function() return remote.FireServer end)
+    if not ok or type(origFn) ~= "function" then return false end
 
--- Slider drag functionality
-local dragging = false
-sliderButton.MouseButton1Down:Connect(function()
-    dragging = true
-end)
+    saOrigInvoke = origFn
+    saRemote     = remote
 
-userInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
-userInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local mousePos = userInputService:GetMouseLocation()
-        local sliderPos = mainFrame.AbsolutePosition.X + sliderBar.AbsolutePosition.X
-        local relativeX = math.clamp(mousePos.X - sliderPos, 0, sliderBar.AbsoluteSize.X)
-        local percent = relativeX / sliderBar.AbsoluteSize.X
-        
-        -- Map 0-1 to 0.05-0.5
-        TELEPORT_SPEED = 0.05 + (percent * 0.45)
-        updateSpeedDisplay()
-    end
-end)
-
--- Button Click Events
-toggleButton.MouseButton1Click:Connect(function()
-    LOOP_ENABLED = not LOOP_ENABLED
-    updateUI()
-    
-    if LOOP_ENABLED then
-        -- Start loop in background
-        spawn(startTeleportLoop)
-    else
-        stopTeleportLoop()
-    end
-end)
-
-closeButton.MouseButton1Click:Connect(function()
-    stopTeleportLoop()
-    screenGui:Destroy()
-end)
-
-mobileButton.MouseButton1Click:Connect(function()
-    LOOP_ENABLED = not LOOP_ENABLED
-    updateUI()
-    
-    if LOOP_ENABLED then
-        spawn(startTeleportLoop)
-    else
-        stopTeleportLoop()
-    end
-end)
-
--- Mobile Detection
-if userInputService.TouchEnabled and not userInputService.KeyboardEnabled then
-    mobileButton.Visible = true
-    mainFrame.Size = UDim2.new(0, 300, 0, 200)
-    mainFrame.Position = UDim2.new(0.5, -150, 0.1, 0)
-end
-
--- Make GUI movable
-local function makeDraggable(frame)
-    local dragToggle = nil
-    local dragSpeed = 0
-    local dragStart = nil
-    local startPos = nil
-
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragToggle = true
-            dragStart = input.Position
-            startPos = frame.Position
+    safeCall(function()
+        remote.FireServer = function(self, ...)
+            if S.SA_ON then
+                local target = sa_getTarget()
+                if target then
+                    local oldCF = Camera.CFrame
+                    Camera.CFrame = CFrame.new(oldCF.Position, target.Position)
+                    local r = saOrigInvoke(self, ...)
+                    Camera.CFrame = oldCF
+                    return r
+                end
+            end
+            return saOrigInvoke(self, ...)
         end
     end)
+    return true
+end
 
-    frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            if dragToggle then
-                local delta = input.Position - dragStart
-                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+local function sa_start()
+    if saActive then return end
+    saActive = true
+    sa_buildFOVGui()
+
+    -- Try to find and hook the attack remote
+    -- Search for any shoot/attack/bullet remote in ReplicatedStorage
+    local ATTACK_KEYWORDS = {"shoot","attack","bullet","fire","weapon","damage","hit","projectile","gun"}
+    local hooked = false
+    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+        if not hooked and (v:IsA("RemoteFunction") or v:IsA("RemoteEvent")) then
+            local lower = v.Name:lower()
+            for _, kw in ipairs(ATTACK_KEYWORDS) do
+                if lower:find(kw) then
+                    if v:IsA("RemoteFunction") then hooked = sa_hookRemote(v)
+                    else hooked = sa_hookRemoteEvent(v) end
+                    if hooked then break end
+                end
+            end
+        end
+        if hooked then break end
+    end
+
+    -- FOV color update loop
+    cleanConn("sa_fov")
+    Conns["sa_fov"] = RunService.RenderStepped:Connect(function()
+        if not S.SA_ON then cleanConn("sa_fov"); return end
+        sa_updateFOVColor(sa_getTarget() ~= nil)
+        -- Keep FOV circle centered (viewport can resize)
+        if saFOVFrame then
+            local d = S.SA_FOV * 2
+            saFOVFrame.Size = UDim2.new(0, d, 0, d)
+        end
+    end)
+end
+
+local function sa_stop()
+    S.SA_ON  = false
+    saActive = false
+    cleanConn("sa_fov")
+    if saFOVGui then saFOVGui:Destroy(); saFOVGui=nil; saFOVFrame=nil end
+    -- Restore original function if possible
+    if saRemote and saOrigInvoke then
+        safeCall(function()
+            if saRemote:IsA("RemoteFunction") then
+                saRemote.InvokeServer = saOrigInvoke
+            else
+                saRemote.FireServer = saOrigInvoke
+            end
+        end)
+        saRemote = nil; saOrigInvoke = nil
+    end
+end
+
+------------------------------------------------------------
+-- ════════════════════════════════
+--   ESP  — BillboardGui based
+--   Works on ALL executors (no Drawing API)
+-- ════════════════════════════════
+------------------------------------------------------------
+local espBillboards = {}  -- [player] = billboardGui
+
+local function esp_hpColor(pct)
+    if pct > 0.6 then return Color3.fromRGB(0, 220, 80)
+    elseif pct > 0.3 then return Color3.fromRGB(255, 200, 0)
+    else return Color3.fromRGB(255, 50, 50) end
+end
+
+local function esp_playerColor(player)
+    if player.Team and S.ESP_NAMES then
+        local tc = player.TeamColor
+        return Color3.fromRGB(tc.r*255, tc.g*255, tc.b*255)
+    end
+    return Color3.fromRGB(255, 80, 100)
+end
+
+local function esp_create(player)
+    if espBillboards[player] then return end
+    local char = player.Character; if not char then return end
+    local head = char:FindFirstChild("Head"); if not head then return end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name          = "ShadowESP_"..player.Name
+    bb.Adornee       = head
+    bb.Size          = UDim2.new(0, 120, 0, 60)
+    bb.StudsOffset   = Vector3.new(0, 2.5, 0)
+    bb.AlwaysOnTop   = true
+    bb.MaxDistance   = S.ESP_MAX_DIST
+    bb.ResetOnSpawn  = false
+    bb.Parent        = head
+
+    local frame = Instance.new("Frame", bb)
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundTransparency = 1
+    frame.BorderSizePixel = 0
+
+    local layout = Instance.new("UIListLayout", frame)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.Padding = UDim.new(0, 1)
+
+    -- NAME
+    local nameLabel = Instance.new("TextLabel", frame)
+    nameLabel.Name = "NameTag"
+    nameLabel.Size = UDim2.new(1, 0, 0, 18)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = player.DisplayName
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 13
+    nameLabel.TextColor3 = esp_playerColor(player)
+    nameLabel.TextStrokeTransparency = 0.5
+    nameLabel.TextStrokeColor3 = Color3.new(0,0,0)
+    nameLabel.Visible = S.ESP_NAMES
+    nameLabel.LayoutOrder = 1
+
+    -- DISTANCE
+    local distLabel = Instance.new("TextLabel", frame)
+    distLabel.Name = "DistTag"
+    distLabel.Size = UDim2.new(1, 0, 0, 14)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Text = ""
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.TextSize = 11
+    distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distLabel.TextStrokeTransparency = 0.4
+    distLabel.TextStrokeColor3 = Color3.new(0,0,0)
+    distLabel.Visible = S.ESP_DIST
+    distLabel.LayoutOrder = 2
+
+    -- HP BAR BACKGROUND
+    local hpBG = Instance.new("Frame", frame)
+    hpBG.Name = "HPBG"
+    hpBG.Size = UDim2.new(0.85, 0, 0, 7)
+    hpBG.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    hpBG.BorderSizePixel = 0
+    hpBG.Visible = S.ESP_HP
+    hpBG.LayoutOrder = 3
+    Instance.new("UICorner", hpBG).CornerRadius = UDim.new(1, 0)
+
+    local hpFill = Instance.new("Frame", hpBG)
+    hpFill.Name = "HPFill"
+    hpFill.Size = UDim2.new(1, 0, 1, 0)
+    hpFill.BackgroundColor3 = Color3.fromRGB(0, 220, 80)
+    hpFill.BorderSizePixel = 0
+    Instance.new("UICorner", hpFill).CornerRadius = UDim.new(1, 0)
+
+    espBillboards[player] = {
+        bb      = bb,
+        name    = nameLabel,
+        dist    = distLabel,
+        hpBG    = hpBG,
+        hpFill  = hpFill,
+        frame   = frame,
+    }
+end
+
+local function esp_remove(player)
+    local obj = espBillboards[player]
+    if obj then
+        safeCall(function() obj.bb:Destroy() end)
+        espBillboards[player] = nil
+    end
+end
+
+local function esp_update(player)
+    local obj = espBillboards[player]; if not obj then return end
+    local char = player.Character
+
+    if not char or not isAlive(char) then
+        obj.bb.Enabled = false; return
+    end
+
+    local myHRP = getHRP()
+    local pHRP  = char:FindFirstChild("HumanoidRootPart")
+    if not pHRP then obj.bb.Enabled = false; return end
+
+    local dist = myHRP and (pHRP.Position - myHRP.Position).Magnitude or 0
+    if dist > S.ESP_MAX_DIST then obj.bb.Enabled = false; return end
+
+    obj.bb.Enabled = true
+
+    -- Update adornee in case character respawned
+    local head = char:FindFirstChild("Head")
+    if head and obj.bb.Adornee ~= head then obj.bb.Adornee = head end
+
+    -- NAME
+    obj.name.Visible = S.ESP_NAMES
+    obj.name.Text    = player.DisplayName
+
+    -- DIST
+    obj.dist.Visible = S.ESP_DIST
+    obj.dist.Text    = string.format("[%d st]", math.floor(dist))
+
+    -- HP
+    obj.hpBG.Visible = S.ESP_HP
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+        obj.hpFill.Size             = UDim2.new(pct, 0, 1, 0)
+        obj.hpFill.BackgroundColor3 = esp_hpColor(pct)
+    end
+end
+
+local function esp_start()
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LocalPlayer then esp_create(v) end
+    end
+    Players.PlayerAdded:Connect(function(v)
+        if S.ESP_ON then task.wait(1); esp_create(v) end
+    end)
+    Players.PlayerRemoving:Connect(function(v) esp_remove(v) end)
+    LocalPlayer.CharacterAdded:Connect(function()
+        -- Re-add ESP for all players after our own respawn
+        task.wait(1)
+        for _, v in pairs(Players:GetPlayers()) do
+            if v ~= LocalPlayer then
+                esp_remove(v); if S.ESP_ON then esp_create(v) end
             end
         end
     end)
 
-    frame.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragToggle = false
+    cleanConn("esp")
+    Conns["esp"] = RunService.Heartbeat:Connect(function()
+        if not S.ESP_ON then
+            for _, v in pairs(Players:GetPlayers()) do
+                local obj = espBillboards[v]
+                if obj then obj.bb.Enabled = false end
+            end
+            cleanConn("esp"); return
+        end
+        for _, v in pairs(Players:GetPlayers()) do
+            if v ~= LocalPlayer then
+                if not espBillboards[v] then esp_create(v) end
+                esp_update(v)
+            end
         end
     end)
 end
 
-makeDraggable(mainFrame)
+local function esp_stop()
+    cleanConn("esp")
+    for _, v in pairs(Players:GetPlayers()) do
+        local obj = espBillboards[v]
+        if obj then obj.bb.Enabled = false end
+    end
+end
 
--- Initialize UI
-updateUI()
-updateSpeedDisplay()
+------------------------------------------------------------
+-- ════════════════════════════════
+--   AUTO-FARM
+-- ════════════════════════════════
+------------------------------------------------------------
+local afRunning = false
+local afThread  = nil
 
-print("=== FAST VOID SPAM LOADED ===")
-print("Click START LOOP for continuous teleporting")
-print("Adjust speed slider for faster/slower teleports")
-print("The script alternates between:")
-print("- Random void teleports")
-print("- Teleporting to dead enemy bodies")
-print("Mobile: Use the floating button")
+local FARM_TARGETS = {
+    Collect = {"CollectPart","Resource","Item","Pickup","Drop","Collectible","Coin","Gem","Crystal","Chest"},
+    Trade   = {"TradingNPC","Trader","ShopNPC","Vendor","NPC","TradePart"},
+    Reward  = {"RewardPart","DailyReward","Reward","Bonus","ClaimPart","Daily","Claim"},
+}
+
+local FARM_REMOTES = {
+    Collect = {"collect","collectitem","claim","pickup","gather","item"},
+    Trade   = {"trade","traderequest","offer","exchange"},
+    Reward  = {"reward","claimreward","daily","bonus","claim"},
+}
+
+local function af_delay()
+    local base = S.AF_DELAY
+    if S.AF_RAND then return base + (math.random() * 0.8 - 0.4) end
+    return base
+end
+
+local function af_findTargets()
+    local keywords = FARM_TARGETS[S.AF_MODE] or {}
+    local found = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj and obj.Parent then
+            local name = obj.Name:lower()
+            for _, kw in ipairs(keywords) do
+                if name:find(kw:lower()) then
+                    local pos
+                    if obj:IsA("BasePart") then
+                        pos = obj.Position
+                    elseif obj:IsA("Model") then
+                        safeCall(function() pos = obj:GetPivot().Position end)
+                    end
+                    if pos then
+                        table.insert(found, {obj=obj, pos=pos})
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return found
+end
+
+local function af_teleport(pos)
+    local myHRP = getHRP(); if not myHRP then return end
+    if S.TP_ANTIKICK then
+        -- Hop in steps to avoid position-sanity anti-cheat
+        local startPos = myHRP.Position
+        local dist = (pos - startPos).Magnitude
+        local steps = math.clamp(math.ceil(dist / 45), 1, 8)
+        for i = 1, steps do
+            local t = i / steps
+            local mid = startPos:Lerp(pos + Vector3.new(0, 3, 0), t)
+            safeCall(function() myHRP.CFrame = CFrame.new(mid) end)
+            task.wait(S.TP_DELAY / steps)
+        end
+    else
+        safeCall(function() myHRP.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end)
+        task.wait(0.1)
+    end
+end
+
+local function af_interact(obj)
+    -- Method 1: ProximityPrompt (try game function first, then manual trigger)
+    for _, pp in pairs(obj:GetDescendants()) do
+        if pp:IsA("ProximityPrompt") then
+            -- Standard way — trigger the held event
+            safeCall(function()
+                local old = pp.HoldDuration
+                pp.HoldDuration = 0
+                pp.MaxActivationDistance = 60
+                -- Fire the internal triggered signal
+                pp.Triggered:Fire(LocalPlayer)
+                task.wait(0.05)
+                pp.HoldDuration = old
+            end)
+            return true
+        end
+    end
+    -- Method 2: ClickDetector
+    for _, cd in pairs(obj:GetDescendants()) do
+        if cd:IsA("ClickDetector") then
+            safeCall(function()
+                local fakeMouse = LocalPlayer:GetMouse()
+                cd:FireClick(LocalPlayer)
+            end)
+            return true
+        end
+    end
+    return false
+end
+
+local function af_loop()
+    while afRunning do
+        local targets = af_findTargets()
+        local remote  = findRemote(FARM_REMOTES[S.AF_MODE] or {})
+
+        if #targets == 0 then
+            task.wait(2)
+        else
+            for _, t in ipairs(targets) do
+                if not afRunning then break end
+
+                if S.AF_TP then af_teleport(t.pos) end
+                task.wait(af_delay())
+
+                -- Try interact then remote
+                local interacted = af_interact(t.obj)
+                if not interacted and remote then
+                    -- Fire with object ref, then bare
+                    fireRemote(remote, t.obj)
+                    task.wait(0.2 + math.random() * 0.3)
+                    fireRemote(remote)
+                end
+
+                task.wait(af_delay())
+            end
+        end
+        task.wait(0.5)
+    end
+end
+
+local function af_start()
+    if afRunning then return end
+    afRunning = true
+    afThread  = task.spawn(af_loop)
+end
+
+local function af_stop()
+    afRunning = false
+    if afThread then
+        afThread = nil  -- thread will exit via afRunning=false
+        afThread = nil
+    end
+end
+
+------------------------------------------------------------
+-- SPEED
+------------------------------------------------------------
+local function sp_apply()
+    local hum = getHumanoid(); if not hum then return end
+    hum.WalkSpeed = S.SP_ON and S.SP_VAL or 16
+end
+
+LocalPlayer.CharacterAdded:Connect(function(c)
+    character = c
+    hrp = c:WaitForChild("HumanoidRootPart")
+    task.wait(1); sp_apply()
+end)
+
+------------------------------------------------------------
+-- REMOTE SCANNER
+------------------------------------------------------------
+local function scanRemotes()
+    print("=== [ShadowBrainrots] Remote Scan ===")
+    local count = 0
+    local roots = {ReplicatedStorage, workspace}
+    safeCall(function() table.insert(roots, LocalPlayer.PlayerGui) end)
+    for _, root in ipairs(roots) do
+        for _, v in pairs(root:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                print(string.format("  [%s] %s  →  %s", v.ClassName, v.Name, v:GetFullName()))
+                count = count + 1
+            end
+        end
+    end
+    print(string.format("=== Total: %d remotes ===", count))
+end
+
+------------------------------------------------------------
+-- ════════════════════════════════
+--   UI  (pure Roblox GuiObjects)
+--   No libraries required
+-- ════════════════════════════════
+------------------------------------------------------------
+
+-- Clean up any old UI
+safeCall(function()
+    local cg = game:GetService("CoreGui")
+    local old = cg:FindFirstChild("ShadowBrainrotsUI")
+    if old then old:Destroy() end
+end)
+safeCall(function()
+    local old = LocalPlayer.PlayerGui:FindFirstChild("ShadowBrainrotsUI")
+    if old then old:Destroy() end
+end)
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name           = "ShadowBrainrotsUI"
+ScreenGui.ResetOnSpawn   = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder   = 999
+
+local parentedToCoreGui = false
+safeCall(function()
+    ScreenGui.Parent = game:GetService("CoreGui")
+    parentedToCoreGui = true
+end)
+if not parentedToCoreGui then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- COLORS
+local C = {
+    BG      = Color3.fromRGB(10, 10, 16),
+    PANEL   = Color3.fromRGB(18, 18, 26),
+    HEADER  = Color3.fromRGB(22, 22, 32),
+    SECTION = Color3.fromRGB(28, 28, 40),
+    ACCENT  = Color3.fromRGB(255, 75, 115),
+    ACCENT2 = Color3.fromRGB(190, 45, 85),
+    TEXT    = Color3.fromRGB(235, 235, 235),
+    SUB     = Color3.fromRGB(140, 140, 158),
+    ON      = Color3.fromRGB(0, 215, 100),
+    OFF     = Color3.fromRGB(48, 48, 62),
+    KNOB    = Color3.fromRGB(248, 248, 248),
+    BORDER  = Color3.fromRGB(38, 38, 54),
+}
+
+local WIN_W = isMobile and 338 or 378
+local WIN_H = isMobile and 515 or 555
+
+-- TOGGLE BUTTON (always visible)
+local ToggleBtn = Instance.new("TextButton", ScreenGui)
+ToggleBtn.Size             = UDim2.new(0, 54, 0, 54)
+ToggleBtn.Position         = UDim2.new(1, -68, 1, -84)
+ToggleBtn.BackgroundColor3 = C.ACCENT
+ToggleBtn.BorderSizePixel  = 0
+ToggleBtn.Text             = "🧠"
+ToggleBtn.TextSize         = 26
+ToggleBtn.Font             = Enum.Font.GothamBold
+ToggleBtn.TextColor3       = Color3.new(1,1,1)
+ToggleBtn.ZIndex           = 100
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 16)
+
+-- MAIN FRAME
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.Size             = UDim2.new(0, WIN_W, 0, WIN_H)
+MainFrame.Position         = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
+MainFrame.BackgroundColor3 = C.BG
+MainFrame.BorderSizePixel  = 0
+MainFrame.Visible          = false
+MainFrame.ZIndex           = 50
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 14)
+local mStroke = Instance.new("UIStroke", MainFrame)
+mStroke.Color = C.ACCENT; mStroke.Thickness = 1.5; mStroke.Transparency = 0.4
+
+-- HEADER
+local Header = Instance.new("Frame", MainFrame)
+Header.Size = UDim2.new(1,0,0,46)
+Header.BackgroundColor3 = C.HEADER; Header.BorderSizePixel = 0; Header.ZIndex = 52
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 14)
+-- Cover bottom corners of rounded header
+local hFix = Instance.new("Frame", Header)
+hFix.Size = UDim2.new(1,0,0,14); hFix.Position = UDim2.new(0,0,1,-14)
+hFix.BackgroundColor3 = C.HEADER; hFix.BorderSizePixel = 0; hFix.ZIndex = 52
+
+local HTitle = Instance.new("TextLabel", Header)
+HTitle.Size = UDim2.new(1,-50,1,0); HTitle.Position = UDim2.new(0,14,0,0)
+HTitle.BackgroundTransparency = 1; HTitle.Text = "🧠  Brainrots Suite  V2.0"
+HTitle.Font = Enum.Font.GothamBold; HTitle.TextSize = isMobile and 13 or 14
+HTitle.TextColor3 = C.TEXT; HTitle.TextXAlignment = Enum.TextXAlignment.Left; HTitle.ZIndex = 53
+
+local CloseBtn = Instance.new("TextButton", Header)
+CloseBtn.Size = UDim2.new(0,28,0,28); CloseBtn.Position = UDim2.new(1,-36,0.5,-14)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(200,55,55); CloseBtn.BorderSizePixel = 0
+CloseBtn.Text = "✕"; CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 13
+CloseBtn.TextColor3 = Color3.new(1,1,1); CloseBtn.ZIndex = 53
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+
+-- DRAG (mouse + touch)
+do
+    local drag, ds, sp2 = false, nil, nil
+    local function startDrag(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            drag = true; ds = i.Position; sp2 = MainFrame.Position
+        end
+    end
+    local function moveDrag(i)
+        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
+                  or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - ds
+            MainFrame.Position = UDim2.new(sp2.X.Scale, sp2.X.Offset+d.X, sp2.Y.Scale, sp2.Y.Offset+d.Y)
+        end
+    end
+    local function endDrag(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then drag = false end
+    end
+    Header.InputBegan:Connect(startDrag)
+    Header.InputChanged:Connect(moveDrag)
+    UserInputService.InputChanged:Connect(moveDrag)
+    UserInputService.InputEnded:Connect(endDrag)
+end
+
+-- TAB BAR
+local TAB_NAMES = {"🎯 Silent","👁 ESP","🌾 Farm","⚡ Misc","🛡 Defense"}
+local TabBar = Instance.new("Frame", MainFrame)
+TabBar.Size = UDim2.new(1,-16,0,34); TabBar.Position = UDim2.new(0,8,0,52)
+TabBar.BackgroundColor3 = C.SECTION; TabBar.BorderSizePixel = 0; TabBar.ZIndex = 51
+Instance.new("UICorner", TabBar).CornerRadius = UDim.new(0,10)
+local tbLayout = Instance.new("UIListLayout", TabBar)
+tbLayout.FillDirection = Enum.FillDirection.Horizontal
+tbLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tbLayout.Padding = UDim.new(0,3)
+local tbPad = Instance.new("UIPadding", TabBar)
+tbPad.PaddingLeft   = UDim.new(0,3); tbPad.PaddingRight  = UDim.new(0,3)
+tbPad.PaddingTop    = UDim.new(0,3); tbPad.PaddingBottom = UDim.new(0,3)
+
+-- SCROLL CONTENT
+local Content = Instance.new("ScrollingFrame", MainFrame)
+Content.Size = UDim2.new(1,-16,1,-100); Content.Position = UDim2.new(0,8,0,92)
+Content.BackgroundTransparency = 1; Content.BorderSizePixel = 0
+Content.ScrollBarThickness = isMobile and 3 or 4
+Content.ScrollBarImageColor3 = C.ACCENT
+Content.CanvasSize = UDim2.new(0,0,0,0)
+Content.ZIndex = 51
+local cLayout = Instance.new("UIListLayout", Content)
+cLayout.SortOrder = Enum.SortOrder.LayoutOrder; cLayout.Padding = UDim.new(0,5)
+local cPad = Instance.new("UIPadding", Content)
+cPad.PaddingTop = UDim.new(0,4); cPad.PaddingBottom = UDim.new(0,8)
+
+local TabButtons, TabPages = {}, {}
+local currentTab = 1
+
+local function switchTab(idx)
+    currentTab = idx
+    for i, page in pairs(TabPages) do page.Visible = (i == idx) end
+    for i, btn  in pairs(TabButtons) do
+        btn.BackgroundColor3     = (i == idx) and C.ACCENT or C.OFF
+        btn.BackgroundTransparency = (i == idx) and 0 or 1
+        btn.TextColor3           = (i == idx) and Color3.new(1,1,1) or C.SUB
+    end
+    Content.CanvasPosition = Vector2.new(0,0)
+end
+
+for i, name in ipairs(TAB_NAMES) do
+    local btn = Instance.new("TextButton", TabBar)
+    btn.Size = UDim2.new(0.19,-2,1,0); btn.LayoutOrder = i
+    btn.BackgroundColor3 = (i==1) and C.ACCENT or C.OFF
+    btn.BackgroundTransparency = (i==1) and 0 or 1
+    btn.BorderSizePixel = 0; btn.Text = name
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = isMobile and 10 or 11
+    btn.TextColor3 = (i==1) and Color3.new(1,1,1) or C.SUB
+    btn.ZIndex = 52
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,8)
+    local ii = i; btn.MouseButton1Click:Connect(function() switchTab(ii) end)
+    TabButtons[i] = btn
+
+    local page = Instance.new("Frame", Content)
+    page.Size = UDim2.new(1,0,0,2000)
+    page.BackgroundTransparency = 1; page.BorderSizePixel = 0
+    page.LayoutOrder = i; page.Visible = (i==1); page.ZIndex = 52
+    local pl = Instance.new("UIListLayout", page)
+    pl.SortOrder = Enum.SortOrder.LayoutOrder; pl.Padding = UDim.new(0,5)
+    TabPages[i] = page
+end
+
+------------------------------------------------------------
+-- UI ELEMENT FACTORIES
+------------------------------------------------------------
+local eO = 0
+local function nO() eO = eO+1; return eO end
+
+local function mkSection(parent, text)
+    local f = Instance.new("Frame", parent)
+    f.Size = UDim2.new(1,0,0,26); f.BackgroundColor3 = C.SECTION
+    f.BorderSizePixel = 0; f.LayoutOrder = nO(); f.ZIndex = 52
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0,8)
+    local l = Instance.new("TextLabel", f)
+    l.Size = UDim2.new(1,-14,1,0); l.Position = UDim2.new(0,10,0,0)
+    l.BackgroundTransparency = 1; l.Text = text
+    l.Font = Enum.Font.GothamBold; l.TextSize = 11; l.TextColor3 = C.ACCENT
+    l.TextXAlignment = Enum.TextXAlignment.Left; l.ZIndex = 53
+end
+
+local function mkLabel(parent, text)
+    local f = Instance.new("Frame", parent)
+    f.Size = UDim2.new(1,0,0,20); f.BackgroundTransparency = 1
+    f.BorderSizePixel = 0; f.LayoutOrder = nO(); f.ZIndex = 52
+    local l = Instance.new("TextLabel", f)
+    l.Size = UDim2.new(1,-14,1,0); l.Position = UDim2.new(0,10,0,0)
+    l.BackgroundTransparency = 1; l.Text = text
+    l.Font = Enum.Font.Gotham; l.TextSize = 11; l.TextColor3 = C.SUB
+    l.TextXAlignment = Enum.TextXAlignment.Left; l.ZIndex = 53
+end
+
+local function mkToggle(parent, label, init, cb)
+    local H = isMobile and 42 or 38
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1,0,0,H); row.BackgroundColor3 = C.PANEL
+    row.BorderSizePixel = 0; row.LayoutOrder = nO(); row.ZIndex = 52
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0,9)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1,-62,1,0); lbl.Position = UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Text = label
+    lbl.Font = Enum.Font.Gotham; lbl.TextSize = isMobile and 12 or 13
+    lbl.TextColor3 = C.TEXT; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 53
+
+    local pill = Instance.new("Frame", row)
+    pill.Size = UDim2.new(0,40,0,22); pill.Position = UDim2.new(1,-50,0.5,-11)
+    pill.BackgroundColor3 = init and C.ON or C.OFF; pill.BorderSizePixel = 0; pill.ZIndex = 53
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(1,0)
+
+    local knob = Instance.new("Frame", pill)
+    knob.Size = UDim2.new(0,18,0,18); knob.Position = UDim2.new(0, init and 19 or 2, 0.5,-9)
+    knob.BackgroundColor3 = C.KNOB; knob.BorderSizePixel = 0; knob.ZIndex = 54
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1,0)
+
+    local val = init
+    local setter = function(v)
+        val = v
+        TweenService:Create(pill, TweenInfo.new(0.14), {BackgroundColor3 = v and C.ON or C.OFF}):Play()
+        TweenService:Create(knob, TweenInfo.new(0.14), {Position = UDim2.new(0, v and 19 or 2, 0.5,-9)}):Play()
+        cb(v)
+    end
+    local btn = Instance.new("TextButton", row)
+    btn.Size = UDim2.new(1,0,1,0); btn.BackgroundTransparency = 1
+    btn.Text = ""; btn.ZIndex = 55
+    btn.MouseButton1Click:Connect(function() setter(not val) end)
+    return setter
+end
+
+local function mkSlider(parent, label, mn, mx, init, fmt, cb)
+    local H = isMobile and 54 or 50
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1,0,0,H); row.BackgroundColor3 = C.PANEL
+    row.BorderSizePixel = 0; row.LayoutOrder = nO(); row.ZIndex = 52
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0,9)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1,-16,0,20); lbl.Position = UDim2.new(0,12,0,5)
+    lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = isMobile and 12 or 13; lbl.TextColor3 = C.TEXT
+    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 53
+
+    local function fv(v) lbl.Text = label.."  "..(fmt and string.format(fmt,v) or tostring(v)) end
+    fv(init)
+
+    local track = Instance.new("Frame", row)
+    track.Size = UDim2.new(1,-24,0,6); track.Position = UDim2.new(0,12,1,-15)
+    track.BackgroundColor3 = C.BORDER; track.BorderSizePixel = 0; track.ZIndex = 53
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
+
+    local fill = Instance.new("Frame", track)
+    fill.Size = UDim2.new((init-mn)/(mx-mn),0,1,0)
+    fill.BackgroundColor3 = C.ACCENT; fill.BorderSizePixel = 0; fill.ZIndex = 54
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
+
+    local knob = Instance.new("Frame", track)
+    knob.Size = UDim2.new(0,14,0,14); knob.AnchorPoint = Vector2.new(0.5,0.5)
+    knob.Position = UDim2.new((init-mn)/(mx-mn),0,0.5,0)
+    knob.BackgroundColor3 = C.KNOB; knob.BorderSizePixel = 0; knob.ZIndex = 55
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1,0)
+
+    local dragging = false
+    local function setA(a)
+        a = math.clamp(a,0,1)
+        local v = math.floor(mn + (mx-mn)*a + 0.5)
+        fill.Size = UDim2.new(a,0,1,0)
+        knob.Position = UDim2.new(a,0,0.5,0)
+        fv(v); cb(v)
+    end
+    track.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            setA((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement
+                      or i.UserInputType == Enum.UserInputType.Touch) then
+            setA((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+end
+
+local function mkDropdown(parent, label, opts, init, cb)
+    local H = isMobile and 44 or 40
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1,0,0,H); row.BackgroundColor3 = C.PANEL
+    row.BorderSizePixel = 0; row.LayoutOrder = nO(); row.ZIndex = 52
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0,9)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(0.45,0,1,0); lbl.Position = UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Text = label
+    lbl.Font = Enum.Font.Gotham; lbl.TextSize = isMobile and 12 or 13
+    lbl.TextColor3 = C.TEXT; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 53
+
+    local selBtn = Instance.new("TextButton", row)
+    selBtn.Size = UDim2.new(0.5,-4,0,28); selBtn.Position = UDim2.new(0.5,2,0.5,-14)
+    selBtn.BackgroundColor3 = C.SECTION; selBtn.BorderSizePixel = 0
+    selBtn.Text = init.." ▾"; selBtn.Font = Enum.Font.Gotham
+    selBtn.TextSize = isMobile and 11 or 12; selBtn.TextColor3 = C.TEXT; selBtn.ZIndex = 53
+    Instance.new("UICorner", selBtn).CornerRadius = UDim.new(0,7)
+
+    local IH = isMobile and 34 or 30
+    local dropF = Instance.new("Frame", ScreenGui)
+    dropF.BackgroundColor3 = C.HEADER; dropF.BorderSizePixel = 0
+    dropF.ZIndex = 200; dropF.Visible = false
+    Instance.new("UICorner", dropF).CornerRadius = UDim.new(0,8)
+    local dStr = Instance.new("UIStroke", dropF)
+    dStr.Color = C.ACCENT; dStr.Thickness = 1; dStr.Transparency = 0.5
+    local dL = Instance.new("UIListLayout", dropF)
+    dL.SortOrder = Enum.SortOrder.LayoutOrder; dL.Padding = UDim.new(0,2)
+    local dP = Instance.new("UIPadding", dropF)
+    dP.PaddingTop = UDim.new(0,4); dP.PaddingBottom = UDim.new(0,4)
+    dP.PaddingLeft = UDim.new(0,4); dP.PaddingRight = UDim.new(0,4)
+
+    local val = init
+    local function close() dropF.Visible = false end
+
+    for i, opt in ipairs(opts) do
+        local b = Instance.new("TextButton", dropF)
+        b.Size = UDim2.new(1,0,0,IH); b.LayoutOrder = i
+        b.BackgroundColor3 = (opt==val) and C.ACCENT2 or C.PANEL
+        b.BorderSizePixel = 0; b.Text = opt
+        b.Font = Enum.Font.Gotham; b.TextSize = isMobile and 12 or 13
+        b.TextColor3 = C.TEXT; b.ZIndex = 201
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
+        b.MouseButton1Click:Connect(function()
+            val = opt; selBtn.Text = opt.." ▾"; cb(opt); close()
+        end)
+    end
+    dropF.Size = UDim2.new(0, 170, 0, #opts*IH + 16)
+
+    selBtn.MouseButton1Click:Connect(function()
+        if dropF.Visible then close(); return end
+        local ap = selBtn.AbsolutePosition; local as2 = selBtn.AbsoluteSize
+        dropF.Position = UDim2.new(0, ap.X, 0, ap.Y + as2.Y + 4)
+        dropF.Visible = true
+    end)
+    UserInputService.InputBegan:Connect(function(i)
+        if dropF.Visible and (i.UserInputType == Enum.UserInputType.MouseButton1
+                           or i.UserInputType == Enum.UserInputType.Touch) then
+            local p = i.Position; local lp = dropF.AbsolutePosition; local ls = dropF.AbsoluteSize
+            if p.X<lp.X or p.X>lp.X+ls.X or p.Y<lp.Y or p.Y>lp.Y+ls.Y then close() end
+        end
+    end)
+end
+
+local function mkButton(parent, label, cb)
+    local H = isMobile and 40 or 36
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(1,0,0,H); btn.BackgroundColor3 = C.ACCENT
+    btn.BorderSizePixel = 0; btn.LayoutOrder = nO(); btn.ZIndex = 52
+    btn.Text = label; btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13; btn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,9)
+    btn.MouseButton1Click:Connect(function()
+        btn.BackgroundColor3 = C.ACCENT2
+        cb()
+        task.delay(0.2, function() btn.BackgroundColor3 = C.ACCENT end)
+    end)
+end
+
+------------------------------------------------------------
+-- BUILD TABS
+------------------------------------------------------------
+
+-- TAB 1: SILENT AIM
+eO = 0; local P1 = TabPages[1]
+mkSection(P1, "🎯 SILENT AIM")
+mkLabel(P1, "Snaps camera to nearest target on fire")
+mkToggle(P1, "Enable Silent Aim", S.SA_ON, function(v)
+    S.SA_ON = v
+    if v then sa_start() else sa_stop() end
+end)
+
+mkSection(P1, "🔵 FOV")
+mkSlider(P1, "FOV Radius", 10, 800, S.SA_FOV, "%d px", function(v)
+    S.SA_FOV = v
+    if saFOVFrame then
+        saFOVFrame.Size = UDim2.new(0, v*2, 0, v*2)
+    end
+end)
+
+mkSection(P1, "🎯 TARGETING")
+mkDropdown(P1, "Aim Part", {"Head","Torso","Closest"}, S.SA_PART, function(v) S.SA_PART = v end)
+mkDropdown(P1, "Priority", {"Crosshair","Distance","Health"}, S.SA_PRIORITY, function(v) S.SA_PRIORITY = v end)
+mkToggle(P1, "Team Check", S.SA_TEAM, function(v) S.SA_TEAM = v end)
+mkToggle(P1, "Visibility Check", S.SA_VIS, function(v) S.SA_VIS = v end)
+
+mkSection(P1, "🔎 REMOTE HOOK")
+mkLabel(P1, "Scan remotes then paste the attack remote name below")
+mkButton(P1, "📋 Scan & Print Remotes", function()
+    scanRemotes()
+end)
+
+-- TAB 2: ESP
+eO = 0; local P2 = TabPages[2]
+mkSection(P2, "👁 ESP")
+mkLabel(P2, "BillboardGui ESP — works on all executors")
+mkToggle(P2, "Enable ESP", S.ESP_ON, function(v)
+    S.ESP_ON = v
+    if v then esp_start() else esp_stop() end
+end)
+
+mkSection(P2, "⚙️ ELEMENTS")
+mkToggle(P2, "Name Tags",    S.ESP_NAMES, function(v) S.ESP_NAMES = v end)
+mkToggle(P2, "Distance",     S.ESP_DIST,  function(v) S.ESP_DIST  = v end)
+mkToggle(P2, "Health Bars",  S.ESP_HP,    function(v) S.ESP_HP    = v end)
+
+mkSection(P2, "📏 RANGE")
+mkSlider(P2, "Max Distance", 50, 2000, S.ESP_MAX_DIST, "%d st", function(v)
+    S.ESP_MAX_DIST = v
+    for _, v2 in pairs(Players:GetPlayers()) do
+        local obj = espBillboards[v2]
+        if obj then obj.bb.MaxDistance = v end
+    end
+end)
+
+-- TAB 3: AUTO-FARM
+eO = 0; local P3 = TabPages[3]
+mkSection(P3, "🌾 AUTO-FARM")
+mkLabel(P3, "Scans workspace and interacts with objects")
+mkToggle(P3, "Enable Auto-Farm", S.AF_ON, function(v)
+    S.AF_ON = v
+    if v then af_start() else af_stop() end
+end)
+
+mkSection(P3, "⚙️ CONFIG")
+mkDropdown(P3, "Farm Mode", {"Collect","Trade","Reward"}, S.AF_MODE, function(v)
+    S.AF_MODE = v
+end)
+mkSlider(P3, "Action Delay", 5, 50, math.floor(S.AF_DELAY*10), "%.1f s", function(v)
+    S.AF_DELAY = v/10
+end)
+mkToggle(P3, "Randomise Delay", S.AF_RAND, function(v) S.AF_RAND = v end)
+
+mkSection(P3, "🚀 TELEPORT")
+mkToggle(P3, "Teleport to Targets", S.AF_TP, function(v) S.AF_TP = v end)
+mkToggle(P3, "Anti-Kick Hops",      S.TP_ANTIKICK, function(v) S.TP_ANTIKICK = v end)
+mkSlider(P3, "Hop Delay", 1, 20, math.floor(S.TP_DELAY*10), "%.1f s", function(v)
+    S.TP_DELAY = v/10
+end)
+
+mkSection(P3, "🔎 DEBUG")
+mkButton(P3, "📋 Scan All Remotes", function() scanRemotes() end)
+
+-- TAB 4: MISC
+eO = 0; local P4 = TabPages[4]
+mkSection(P4, "⚡ SPEED")
+mkToggle(P4, "Custom Walk Speed", S.SP_ON, function(v)
+    S.SP_ON = v; sp_apply()
+end)
+mkSlider(P4, "Walk Speed", 2, 500, S.SP_VAL, "%d", function(v)
+    S.SP_VAL = v; if S.SP_ON then sp_apply() end
+end)
+
+mkSection(P4, "🚀 PLAYER TELEPORT")
+local tpPlayerList = {}
+for _, v in pairs(Players:GetPlayers()) do
+    if v ~= LocalPlayer then table.insert(tpPlayerList, v.Name) end
+end
+if #tpPlayerList == 0 then tpPlayerList = {"(none)"} end
+
+local tpTarget = tpPlayerList[1]
+mkDropdown(P4, "Target", tpPlayerList, tpTarget, function(v) tpTarget = v end)
+mkButton(P4, "🚀 Teleport to Player", function()
+    local target = Players:FindFirstChild(tpTarget)
+    if target and target.Character then
+        local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+        if tHRP then
+            af_teleport(tHRP.Position + Vector3.new(3, 0, 0))
+        end
+    end
+end)
+
+mkSection(P4, "📡 TOOLS")
+mkButton(P4, "📋 Scan Remotes", function() scanRemotes() end)
+mkButton(P4, "🔄 Refresh Player List", function()
+    -- Just notify — can't hot-update dropdown easily, user re-opens menu
+    print("[ShadowBrainrots] Refresh: open menu again to update player list")
+end)
+
+mkSection(P4, "ℹ️ INFO")
+mkLabel(P4, "Shadow Brainrots Suite V2.0 (Delta)")
+mkLabel(P4, "🧠 button or RightAlt = toggle menu")
+mkLabel(P4, "Drag header to move window")
+
+
+-- Re-apply defense on respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if DEF.ANTI_RAGDOLL then def_antiRagdoll(true) end
+    if DEF.NO_KNOCKBACK  then def_noKnockback(true) end
+    if DEF.ANTI_SLOW     then def_antiSlow(true)    end
+    if DEF.ANTI_VOID     then def_antiVoid(true)     end
+end)
+
+-- TAB 5: DEFENSE
+eO = 0; local P5 = TabPages[5]
+mkSection(P5, "🛡 ANTI RAGDOLL")
+mkLabel(P5, "Prevents game from ragdolling your character")
+mkToggle(P5, "Anti Ragdoll", DEF.ANTI_RAGDOLL, function(v)
+    DEF.ANTI_RAGDOLL = v
+    def_antiRagdoll(v)
+end)
+
+mkSection(P5, "💥 NO KNOCKBACK")
+mkLabel(P5, "Destroys BodyVelocity knockback instantly")
+mkToggle(P5, "No Knockback", DEF.NO_KNOCKBACK, function(v)
+    DEF.NO_KNOCKBACK = v
+    def_noKnockback(v)
+end)
+
+mkSection(P5, "🐢 ANTI SLOW")
+mkLabel(P5, "Restores WalkSpeed if game slows you when stealing")
+mkToggle(P5, "Anti Slow", DEF.ANTI_SLOW, function(v)
+    DEF.ANTI_SLOW = v
+    def_antiSlow(v)
+end)
+
+mkSection(P5, "⚠️ ANTI VOID")
+mkLabel(P5, "Teleports you back if you fall out of the map")
+mkToggle(P5, "Anti Void", DEF.ANTI_VOID, function(v)
+    DEF.ANTI_VOID = v
+    def_antiVoid(v)
+end)
+
+mkSection(P5, "ℹ️ INFO")
+mkLabel(P5, "All features auto-reapply on respawn")
+mkLabel(P5, "Anti Slow monitors WalkSpeed each frame")
+
+------------------------------------------------------------
+-- OPEN / CLOSE LOGIC
+------------------------------------------------------------
+local menuOpen = false
+
+local function openMenu()
+    menuOpen = true; MainFrame.Visible = true
+    MainFrame.Size     = UDim2.new(0,0,0,0)
+    MainFrame.Position = UDim2.new(0.5,0,0.5,0)
+    TweenService:Create(MainFrame, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size     = UDim2.new(0,WIN_W,0,WIN_H),
+        Position = UDim2.new(0.5,-WIN_W/2,0.5,-WIN_H/2),
+    }):Play()
+    ToggleBtn.Text = "✕"
+end
+
+local function closeMenu()
+    menuOpen = false
+    TweenService:Create(MainFrame, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        Size     = UDim2.new(0,0,0,0),
+        Position = UDim2.new(0.5,0,0.5,0),
+    }):Play()
+    task.delay(0.16, function() MainFrame.Visible = false end)
+    ToggleBtn.Text = "🧠"
+end
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    if menuOpen then closeMenu() else openMenu() end
+end)
+CloseBtn.MouseButton1Click:Connect(function() closeMenu() end)
+
+-- PC keyboard toggle
+if not isMobile then
+    UserInputService.InputBegan:Connect(function(inp, gpe)
+        if not gpe and inp.KeyCode == Enum.KeyCode.RightAlt then
+            if menuOpen then closeMenu() else openMenu() end
+        end
+    end)
+end
+
+switchTab(1)
+print("✅ Shadow Brainrots Suite V2.0 (Delta) — Loaded! Tap 🧠 to open.")
